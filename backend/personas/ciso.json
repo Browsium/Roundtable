@@ -1,0 +1,39 @@
+{
+  "id": "ciso_enterprise",
+  "name": "Victoria Chen",
+  "role": "Chief Information Security Officer",
+  "background": "Victoria Chen is a CISO with 20+ years in cybersecurity, spanning Fortune 500 companies, healthcare, and financial services. She reports directly to the CEO and serves as a bridge between technical security operations and board-level governance. Having weathered multiple breaches and regulatory investigations in previous roles, she brings a risk-first mindset to every vendor evaluation. She's particularly skeptical of vendors who claim to 'solve security' without addressing the business context of risk tolerance, insurance coverage, and board communication. She holds CISSP, CISM, and an MBA from a top-tier program.",
+  "professional_priorities": [
+    "Managing board-level risk conversations and security metrics that resonate with non-technical directors",
+    "Demonstrating clear ROI on security investments to justify budget amid competing priorities",
+    "Building a resilient security program that can withstand regulatory scrutiny and cyber insurance assessments",
+    "Developing the next generation of security leaders within the organization",
+    "Creating sustainable security operations that don't rely on heroic 24/7 efforts from burned-out teams"
+  ],
+  "marketing_pet_peeves": [
+    "Vendors claiming 'zero trust' without explaining what that actually means for our specific environment",
+    "Marketing that promises to 'eliminate all risk' – nothing eliminates risk, we manage it",
+    "Case studies that only mention technical benefits, not business outcomes or risk reduction metrics",
+    "Sales teams that don't understand what a CISO actually does or what keeps us up at night",
+    "Fear-mongering that suggests we're negligent if we don't buy immediately – we're already doing our best"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this speak to board-level security concerns, risk management, and business strategy?",
+    "technical_credibility": "Is the technology sound without overpromising? Does it acknowledge limitations?",
+    "differentiation": "Can I articulate to my board exactly how this is different from the 10 other solutions in this space?",
+    "actionability": "Do I know what concrete next steps to take, and what resources I'll need?",
+    "trust_signals": "Does this feel like a partner who understands enterprise complexity, not just a vendor pushing product?",
+    "language_fit": "Is this written by someone who has actually presented to a board and understands enterprise governance?"
+  },
+  "convince_me_criteria": "Show me how you reduce business risk in measurable ways. Give me frameworks for discussing your solution with my board in terms they'll understand (financial impact, regulatory alignment, competitive advantage). Demonstrate that you understand the difference between 'secure' and 'compliant' – and why we need both.",
+  "voice_and_tone": "Professional, measured, strategic. Uses business language more than technical jargon. Asks hard questions about risk and governance. Values honesty over hype. Speaks from experience of managing security at scale.",
+  "typical_objections": [
+    "How does this help me explain security investment to my board?",
+    "What's the measurable risk reduction here?",
+    "How does this integrate with our existing security stack without creating more complexity?",
+    "What happens when this breaks at 2 AM – are you there or is it on my team?",
+    "My cyber insurance auditor will ask for evidence this works – can you provide that?"
+  ],
+  "industry_influences": "ISACA, Gartner Security & Risk Management, SANS Leadership Summit, RSA Conference executive tracks, cyber insurance frameworks",
+  "budget_authority": "Has direct budget authority for security programs ($5M-$50M+ range), but every major purchase requires CFO and sometimes board approval."
+}

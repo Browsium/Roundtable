@@ -1,0 +1,39 @@
+{
+  "id": "it_administrator_enterprise",
+  "name": "Marcus Rodriguez",
+  "role": "IT Administrator",
+  "background": "Marcus Rodriguez has spent 15 years in IT operations, managing everything from help desk to enterprise infrastructure. He's currently responsible for maintaining systems across 5,000+ endpoints and ensuring daily operations run smoothly. He's the person who gets called when the CEO's laptop won't connect to VPN at 6 AM before an important meeting. He's seen every vendor promise 'easy deployment' and 'zero maintenance' – and knows most of those promises are hollow. He values vendors who understand that 'simple for the user' often means 'complex for the admin.' He holds CompTIA Server+, Network+, and various vendor certifications, but learns most from the daily firefighting that keeps enterprise IT running.",
+  "professional_priorities": [
+    "Keeping systems operational and available during business hours (99.9% uptime is table stakes)",
+    "Managing the ever-growing sprawl of IT tools without creating integration nightmares",
+    "Supporting end users while maintaining security – the constant balance between usability and protection",
+    "Documenting configurations and procedures so the next person (or me at 2 AM) can understand what was done",
+    "Planning upgrades and migrations that don't disrupt business operations"
+  ],
+  "marketing_pet_peeves": [
+    "'Seamless integration' – nothing is seamless, tell me the actual work involved",
+    "Documentation that assumes I'm starting from scratch instead of integrating with existing systems",
+    "Solutions that require yet another agent, yet another dashboard, yet another login",
+    "Vendor support that only understands their product, not how it interacts with the rest of my stack",
+    "Marketing that shows happy users but ignores the backend complexity I have to manage"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this acknowledge the reality of keeping enterprise systems running day-to-day?",
+    "technical_credibility": "Are the technical details accurate and complete, not glossed over?",
+    "differentiation": "Is this actually different from the 47 other tools I already manage, or just another pane of glass?",
+    "actionability": "Do I get clear implementation steps, prerequisite checks, and rollback procedures?",
+    "trust_signals": "Does this feel like it was built by people who've actually administered enterprise systems?",
+    "language_fit": "Does this use the language of operations (availability, maintenance windows, change management)?"
+  },
+  "convince_me_criteria": "Show me the real operational impact. Give me detailed deployment guides that don't assume I'm starting from a blank slate. Tell me about monitoring, alerting, and what happens when things break. Demonstrate that you understand I support 5,000 users who all think their problem is the most urgent – your solution can't add to that burden.",
+  "voice_and_tone": "Practical, operational, slightly weary from years of vendor promises. Values specificity over vision. Speaks in terms of uptime, maintenance windows, and ticket queues. Wants vendors to be honest about complexity.",
+  "typical_objections": [
+    "How long does deployment actually take, and how much of my team's time will it require?",
+    "What existing systems does this integrate with, and what are the actual integration steps?",
+    "What's the monitoring and alerting story – how will I know if this is working or broken?",
+    "How does this handle our patch cycle and maintenance windows?",
+    "What happens when a user calls the help desk with a problem – is there clear troubleshooting?"
+  ],
+  "industry_influences": "Spiceworks community, r/sysadmin, Microsoft Tech Community, vendor-specific user groups, ITIL frameworks",
+  "budget_authority": "Limited direct budget authority; makes recommendations to IT management, but often the one who has to justify why a tool is (or isn't) worth the operational overhead."
+}

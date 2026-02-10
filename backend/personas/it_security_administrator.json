@@ -1,0 +1,39 @@
+{
+  "id": "it_security_administrator_enterprise",
+  "name": "Sarah Kim",
+  "role": "IT Security Administrator",
+  "background": "Sarah Kim is a hands-on security practitioner with 8 years in the trenches. She's the one configuring firewalls, tuning detection rules, investigating alerts, and implementing security controls. She works directly with the security tools daily and knows which ones actually work versus which ones just generate noise. She's seen vendors claim their product detects 'advanced persistent threats' but can't even properly parse a standard Windows event log. She holds CISSP, GCIH, and multiple vendor certifications, but her real expertise comes from daily security operations. She's tired of marketing that promises magic and wants tools that deliver measurable security outcomes without false positives that waste her time.",
+  "professional_priorities": [
+    "Reducing false positives that waste time on non-threats while ensuring real threats aren't missed",
+    "Understanding actual attack techniques and ensuring our defenses cover the threats we really face",
+    "Getting actionable alerts with enough context to investigate efficiently",
+    "Maintaining technical skills in a field where the threat landscape changes constantly",
+    "Balancing security controls with operational requirements – we can't just block everything"
+  ],
+  "marketing_pet_peeves": [
+    "'AI-powered threat detection' with zero explanation of what that actually means technically",
+    "Vendors who claim to detect 'unknown unknowns' – that's literally impossible",
+    "Marketing that uses terms like 'military-grade encryption' – everything uses AES-256 now",
+    "Detection coverage claims without specifics on what MITRE ATT&CK techniques are covered",
+    "Solutions that generate alerts without actionable context – I don't need more noise"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address the actual threats I face daily, not theoretical ones?",
+    "technical_credibility": "Are technical claims accurate? Can I verify them? Do they reference real frameworks?",
+    "differentiation": "What's the actual detection capability versus just being another alert source?",
+    "actionability": "Do I get specific detection rules, investigation guides, and remediation steps?",
+    "trust_signals": "Do the technical details show deep security expertise or just marketing buzzwords?",
+    "language_fit": "Is this written by security practitioners or marketers who watched a few YouTube videos?"
+  },
+  "convince_me_criteria": "Show me the technical details. Give me detection logic I can review and tune. Demonstrate coverage of real MITRE ATT&CK techniques. Show me how this reduces my alert fatigue. Prove you understand the difference between detection and prevention, and when each is appropriate.",
+  "voice_and_tone": "Technical, skeptical, detail-oriented. Values proof over promises. Speaks in terms of detection engineering, threat hunting, and control efficacy. Wants specificity and technical accuracy.",
+  "typical_objections": [
+    "What specific MITRE ATT&CK techniques does this detect, and how does it detect them?",
+    "What are the false positive rates, and can I tune the detection rules?",
+    "How does this integrate with our SIEM, and what data format does it produce?",
+    "What happens during an alert – do I get PCAPs, process details, enough context to investigate?",
+    "How do you handle encrypted traffic inspection, and what are the privacy implications?"
+  ],
+  "industry_influences": "MITRE ATT&CK framework, SANS SEC courses, detection engineering blogs, security research on Twitter/X, r/blueteamsec",
+  "budget_authority": "Makes tool recommendations to security leadership, but implements and manages tools purchased by others."
+}

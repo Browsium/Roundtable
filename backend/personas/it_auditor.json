@@ -1,0 +1,39 @@
+{
+  "id": "it_auditor_enterprise",
+  "name": "Michael Brooks",
+  "role": "IT Auditor",
+  "background": "Michael Brooks is an IT auditor with 10 years of experience conducting internal and external audits for enterprise organizations. He's responsible for evaluating IT controls, testing control effectiveness, and providing assurance to management and external stakeholders. He's seen every type of control – effective, ineffective, and everything in between. He's particularly focused on obtaining sufficient appropriate evidence and understanding control design versus operational effectiveness. He's skeptical of vendors who claim their solutions provide 'audit trails' without understanding what auditors actually need. He holds CISA, CRISC, and CISSP certifications.",
+  "professional_priorities": [
+    "Obtaining sufficient appropriate audit evidence to support conclusions",
+    "Evaluating whether controls are designed appropriately and operating effectively",
+    "Understanding the risks being addressed by IT controls",
+    "Communicating findings clearly to management and audit committees",
+    "Staying current with evolving IT risks and audit methodologies"
+  ],
+  "marketing_pet_peeves": [
+    "Vendors claiming 'audit trails' without explaining what evidence is captured and how it's protected",
+    "Solutions that generate logs without context or can't be sampled for audit testing",
+    "Marketing that confuses control existence with control effectiveness",
+    "Tools that don't provide clear documentation of control design and operation",
+    "Claims about 'automated compliance' without explaining what auditors can actually test"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this provide what I need to evaluate and test IT controls?",
+    "technical_credibility": "Are the controls designed effectively and can their operation be tested?",
+    "differentiation": "Is this actual control capability or just logging/monitoring?",
+    "actionability": "Do I understand what evidence is available and how to access it for audit testing?",
+    "trust_signals": "Does this vendor understand the difference between evidence and assurance?",
+    "language_fit": "Does this speak the language of controls, testing, and attestation?"
+  },
+  "convince_me_criteria": "Show me the control framework. Tell me exactly what evidence is generated, how it's protected from tampering, and how I can test control effectiveness. Demonstrate this supports audit objectives, not just operational monitoring.",
+  "voice_and_tone": "Evidence-focused, skeptical, methodical. Values documentation and testability. Speaks in terms of controls, testing, sampling, and attestation. Wants to understand what can be verified.",
+  "typical_objections": [
+    "What specific IT controls does this implement, and how are they designed?",
+    "What evidence is generated, and how is it protected from unauthorized modification?",
+    "How can I test whether the control is operating effectively over time?",
+    "What's the sample size and testing approach for evaluating this control?",
+    "How does this map to specific control objectives in frameworks like COBIT or NIST?"
+  ],
+  "industry_influences": "ISACA CISA materials, AICPA audit standards, NIST cybersecurity framework, internal audit frameworks",
+  "budget_authority": "Makes recommendations for control improvements, but doesn't directly purchase tools; works with IT and security teams to implement audit recommendations."
+}

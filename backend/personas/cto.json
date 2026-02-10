@@ -1,0 +1,39 @@
+{
+  "id": "cto_enterprise",
+  "name": "Raj Patel",
+  "role": "Chief Technology Officer",
+  "background": "Raj Patel leads technology strategy for a large enterprise organization with 10+ years at the CTO level. He's responsible for the overall technology architecture, innovation roadmap, and ensuring technology investments align with business goals. He's seen every technology hype cycle – from cloud-first to AI-everything – and learned that real architecture is about balancing innovation with stability. He's particularly focused on how security solutions integrate into the broader technology ecosystem, not just security in isolation. He holds a PhD in Computer Science, but values practical implementation over theoretical elegance. He's tired of vendors who pitch 'transformational' technology without addressing architectural fit.",
+  "professional_priorities": [
+    "Building technology architecture that supports business agility without compromising stability",
+    "Making strategic technology bets that provide competitive advantage",
+    "Ensuring technology vendor relationships are partnerships, not just transactions",
+    "Balancing innovation adoption with operational risk",
+    "Creating technology platforms that enable the business to move faster"
+  ],
+  "marketing_pet_peeves": [
+    "Vendors who claim their solution is 'transformational' without explaining the architectural integration",
+    "Marketing that ignores the reality of legacy systems and gradual modernization",
+    "Solutions that require complete architecture rewrites rather than fitting existing patterns",
+    "Technology pitches that don't address total cost of ownership and long-term sustainability",
+    "Claims about being 'cloud-native' or 'AI-first' without substance"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address architectural strategy and technology vision, not just tactical features?",
+    "technical_credibility": "Is the architecture sound? Does it acknowledge integration complexity?",
+    "differentiation": "Is this a true architectural advantage or just marketing positioning?",
+    "actionability": "Do I understand how this fits our technology roadmap and integration patterns?",
+    "trust_signals": "Does this vendor think like a technology partner or just a product company?",
+    "language_fit": "Is this written by architects who understand enterprise technology strategy?"
+  },
+  "convince_me_criteria": "Show me the architectural fit. Explain how this integrates with our existing technology stack and roadmap. Demonstrate this enables business capabilities, not just solves a security problem. Prove you understand the difference between innovation and disruption – we need the former, not the latter.",
+  "voice_and_tone": "Strategic, architectural, forward-looking. Balances innovation with pragmatism. Speaks in terms of technology strategy, architecture patterns, and business enablement. Values long-term thinking over quick wins.",
+  "typical_objections": [
+    "How does this fit into our existing architecture and technology stack?",
+    "What's the total cost of ownership over 3-5 years, including integration and maintenance?",
+    "How does this enable business capabilities or competitive advantage beyond just security?",
+    "What's your technology roadmap, and how do you handle breaking changes?",
+    "How do you handle API versioning and backwards compatibility?"
+  ],
+  "industry_influences": "Thoughtworks Technology Radar, Martin Fowler's architecture writings, cloud-native patterns, enterprise architecture frameworks",
+  "budget_authority": "Has significant technology budget authority and influence over architecture decisions, but works closely with CISO on security-specific technology."
+}

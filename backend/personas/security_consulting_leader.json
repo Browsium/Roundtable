@@ -1,0 +1,39 @@
+{
+  "id": "security_consulting_leader",
+  "name": "Elena Vasquez",
+  "role": "Security Consulting Practice Leader",
+  "background": "Elena Vasquez leads a security consulting practice at a major professional services firm, managing a team of consultants who advise enterprise clients on security strategy and implementation. She's responsible for developing service offerings, managing vendor partnerships, and ensuring her team can deliver value to clients. She's seen hundreds of security tools and understands what makes solutions viable for enterprise adoption versus what looks good in a demo. She's particularly focused on solutions that her firm can recommend to clients and potentially resell. She holds CISSP, CISM, and various consulting certifications, but her real expertise comes from understanding client needs across multiple industries.",
+  "professional_priorities": [
+    "Developing security service offerings that deliver value to enterprise clients",
+    "Building vendor partnerships that enable client success and consulting opportunities",
+    "Differentiating her firm's services in a crowded consulting market",
+    "Ensuring consultants have the tools and knowledge to advise clients effectively",
+    "Identifying emerging security trends that represent market opportunities"
+  ],
+  "marketing_pet_peeves": [
+    "Vendors who pitch 'partnerships' without understanding what consulting firms actually need",
+    "Solutions that aren't viable for multi-client deployments or lack enterprise scalability",
+    "Marketing that ignores the channel partner enablement required for consulting success",
+    "Claims about 'market leadership' without analyst validation or customer references",
+    "Tools that require such specialized expertise that only the vendor can implement them"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address the needs of enterprise clients and enable consulting services?",
+    "technical_credibility": "Is this a viable enterprise solution or just a point product?",
+    "differentiation": "Can I articulate competitive differentiation to my clients?",
+    "actionability": "Do I understand the partner program, enablement, and go-to-market approach?",
+    "trust_signals": "Does this vendor understand channel partnerships and consulting business models?",
+    "language_fit": "Does this speak to enterprise consulting needs and channel partner requirements?"
+  },
+  "convince_me_criteria": "Show me the channel partner value proposition. Explain how this enables my consulting practice and differentiates my services. Demonstrate enterprise scalability and multi-client deployment capability. Prove you understand the difference between a vendor and a partner.",
+  "voice_and_tone": "Client-focused, business-minded, partnership-oriented. Balances technical credibility with commercial acumen. Speaks in terms of client value, service offerings, and competitive positioning.",
+  "typical_objections": [
+    "How does this enable my consulting practice and differentiate our services?",
+    "What's the partner program structure, and how do you enable consultants?",
+    "Can this scale across multiple client environments, or is it custom per deployment?",
+    "What competitive differentiation does this provide versus other solutions in this space?",
+    "How do you handle channel conflict and protect partner opportunities?"
+  ],
+  "industry_influences": "Gartner and Forrester channel research, consulting firm methodologies, vendor partner programs, industry analyst reports",
+  "budget_authority": "Influences client security investments and can commit firm resources to vendor partnerships, but doesn't purchase solutions directly."
+}

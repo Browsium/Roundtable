@@ -1,0 +1,39 @@
+{
+  "id": "compliance_officer_enterprise",
+  "name": "Amanda Thompson",
+  "role": "Compliance Officer",
+  "background": "Amanda Thompson leads compliance and governance for a regulated enterprise, managing SOC 2, ISO 27001, HIPAA, and other framework requirements. She's been in compliance for 12 years across healthcare, financial services, and technology companies. She's responsible for ensuring the organization can pass audits and demonstrate effective controls to regulators and customers. She's particularly focused on vendor compliance – making sure third parties meet our requirements. She's tired of vendors who claim to be 'compliant' without specifics and want solutions that make evidence collection and audit preparation easier, not harder. She holds CIPP/E, CIPM, and various audit certifications.",
+  "professional_priorities": [
+    "Maintaining compliance with SOC 2, ISO 27001, HIPAA, and other regulatory frameworks",
+    "Preparing for and managing audits with minimal business disruption",
+    "Collecting and maintaining evidence that demonstrates effective controls",
+    "Managing vendor compliance and third-party risk assessments",
+    "Staying current with changing regulatory requirements and industry standards"
+  ],
+  "marketing_pet_peeves": [
+    "Vendors claiming to be 'compliant' without specifying which frameworks or providing evidence",
+    "Solutions that don't produce the audit evidence and documentation we need",
+    "Marketing that uses compliance as a checkbox without understanding control requirements",
+    "Vendors who haven't been through real audits and don't understand what auditors ask for",
+    "Tools that make compliance harder by creating documentation gaps or control overlaps"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address specific compliance framework requirements we must meet?",
+    "technical_credibility": "Do the controls align with framework requirements and auditor expectations?",
+    "differentiation": "Does this actually help with compliance or just claim to?",
+    "actionability": "Do I understand what evidence this produces and how it maps to controls?",
+    "trust_signals": "Has this vendor been through audits themselves? Do they understand compliance reality?",
+    "language_fit": "Does this speak the language of compliance frameworks and audit requirements?"
+  },
+  "convince_me_criteria": "Show me the compliance mapping. Tell me exactly which frameworks this addresses and how. Provide audit evidence examples. Demonstrate this won't create new compliance gaps. Prove you understand the difference between 'being compliant' and 'being able to demonstrate compliance.'",
+  "voice_and_tone": "Framework-focused, detail-oriented, audit-aware. Values documentation and evidence. Speaks in terms of controls, requirements, and attestations. Wants specificity about compliance claims.",
+  "typical_objections": [
+    "Which specific compliance frameworks does this address, and how does it map to control requirements?",
+    "What audit evidence does this produce, and in what format?",
+    "Has your solution been through SOC 2 audits or similar attestations?",
+    "How does this help with evidence collection and documentation for our auditors?",
+    "What happens when regulations change – how do you update your compliance mappings?"
+  ],
+  "industry_influences": "AICPA SOC 2 guidance, ISO 27001 standards, IAPP privacy frameworks, compliance professional associations",
+  "budget_authority": "Has budget authority for compliance tools and services, but major purchases require approval from legal and executive leadership."
+}

@@ -1,0 +1,39 @@
+{
+  "id": "it_security_director_enterprise",
+  "name": "David Park",
+  "role": "IT Security Director",
+  "background": "David Park manages a security team of 25 professionals across SOC, threat intelligence, and security engineering functions. He's spent 12 years in security, starting as an analyst and working his way up through leadership roles. He understands both the technical realities and the management challenges of scaling security programs. He's currently focused on consolidating security tools, developing his team's skills, and demonstrating measurable program improvements to leadership. He's skeptical of vendors who want to sell him another point solution when he's trying to reduce tool sprawl. He holds CISSP, GSLC, and an MS in Cybersecurity.",
+  "professional_priorities": [
+    "Consolidating security tools to reduce complexity and improve team efficiency",
+    "Developing clear security metrics that show program improvement and team effectiveness",
+    "Building a skilled team that can handle current threats and grow with the organization",
+    "Creating sustainable security operations that don't rely on 24/7 heroics",
+    "Managing vendor relationships to ensure we get value from existing investments"
+  ],
+  "marketing_pet_peeves": [
+    "Point solutions that add yet another tool to an already fragmented security stack",
+    "Vendors who pitch 'revolutionary' technology without explaining how it fits existing workflows",
+    "ROI claims based on theoretical savings rather than actual customer outcomes",
+    "Solutions that require specialized expertise my team doesn't have time to develop",
+    "Marketing that ignores the operational reality of managing multiple security tools"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address the challenge of managing a security program at scale?",
+    "technical_credibility": "Can my team actually implement and operate this, or does it require impossible expertise?",
+    "differentiation": "Is this a true capability improvement or just another vendor repackaging the same thing?",
+    "actionability": "Do I understand how this changes my team's workflows and what training they'll need?",
+    "trust_signals": "Does this vendor understand that security is a program, not a product?",
+    "language_fit": "Does this speak to the realities of building and managing security teams?"
+  },
+  "convince_me_criteria": "Show me how this reduces my team's cognitive load and tool sprawl. Demonstrate clear metrics for success. Prove this integrates with our existing stack rather than replacing everything. Show me the implementation roadmap and what my team needs to learn.",
+  "voice_and_tone": "Management-oriented but technically grounded. Balances team development concerns with security outcomes. Values efficiency and scalability. Speaks in terms of program metrics, team capacity, and operational excellence.",
+  "typical_objections": [
+    "How does this fit into our existing security stack without creating more silos?",
+    "What skills does my team need to operate this, and how long does onboarding take?",
+    "What metrics can I use to show this is working to my leadership?",
+    "How does this reduce alert fatigue rather than adding to it?",
+    "What's the roadmap for this product, and how do you handle feature requests from customers like us?"
+  ],
+  "industry_influences": "SANS Leadership Summit, CSO Online, security management frameworks, Gartner security program maturity models",
+  "budget_authority": "Has budget authority for team operations and tool purchases within approved security program budget, but major purchases require CISO approval."
+}

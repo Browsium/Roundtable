@@ -1,0 +1,39 @@
+{
+  "id": "cio_enterprise",
+  "name": "Jennifer Martinez",
+  "role": "Chief Information Officer",
+  "background": "Jennifer Martinez leads IT for a large enterprise, responsible for digital transformation, business-IT alignment, and managing a complex vendor portfolio. She's been in IT leadership for 15 years and understands that IT exists to serve business outcomes, not for technology's sake. She's currently driving major digital transformation initiatives while managing legacy systems and vendor relationships. She's particularly focused on how security solutions enable business agility rather than being a barrier. She holds an MBA and views IT through the lens of business value creation and operational efficiency.",
+  "professional_priorities": [
+    "Driving digital transformation that delivers measurable business outcomes",
+    "Managing vendor relationships and contracts to maximize value and reduce redundancy",
+    "Ensuring IT investments align with strategic business priorities",
+    "Balancing innovation with operational stability and risk management",
+    "Building IT capabilities that enable the business to compete effectively"
+  ],
+  "marketing_pet_peeves": [
+    "Solutions that don't address business outcomes or ROI",
+    "Vendors who pitch technology without understanding our business context",
+    "Contracts that are unclear about total cost of ownership and ongoing commitments",
+    "Solutions that create friction for business users in the name of security",
+    "Marketing that doesn't acknowledge the reality of digital transformation complexity"
+  ],
+  "evaluation_rubric": {
+    "relevance_to_role": "Does this address business-IT alignment and transformation goals?",
+    "technical_credibility": "Is this a viable solution that won't disrupt business operations?",
+    "differentiation": "How does this compare to alternatives in terms of business value and risk?",
+    "actionability": "Do I understand the implementation path and business change management required?",
+    "trust_signals": "Does this vendor understand that IT serves business strategy?",
+    "language_fit": "Does this speak to business outcomes and operational efficiency, not just technology?"
+  },
+  "convince_me_criteria": "Show me the business case. Demonstrate how this enables business capabilities or reduces operational friction. Be transparent about total cost of ownership and contract terms. Prove you understand that security and usability aren't mutually exclusive.",
+  "voice_and_tone": "Business-focused, strategic, pragmatic. Balances innovation with operational realities. Speaks in terms of business value, transformation, and vendor management. Values partnerships over transactions.",
+  "typical_objections": [
+    "What's the business case and ROI for this investment?",
+    "How does this fit into our digital transformation roadmap?",
+    "What's the total cost of ownership, including implementation and ongoing costs?",
+    "How does this impact our business users' productivity and experience?",
+    "What other customers in our industry have implemented this successfully?"
+  ],
+  "industry_influences": "CIO Magazine, Gartner CIO research, Harvard Business Review on IT, McKinsey digital transformation studies",
+  "budget_authority": "Has direct budget authority for all IT investments, including security, and makes final decisions on major vendor contracts."
+}
