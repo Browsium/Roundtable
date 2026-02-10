@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -36,9 +36,12 @@ roundtable.db
 uploads/
 temp/
 
-# Environment variables
-.env
-.env.local
+# Environment variables (root only)
+/.env
+/.env.local
+
+# Allow frontend .env.local as template
+!/frontend/.env.local
 
 # IDE
 .vscode/
