@@ -14,7 +14,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-};
+});
 
 // Update baseURL if it changes in localStorage
 if (typeof window !== 'undefined') {
