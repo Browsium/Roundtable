@@ -1,11 +1,29 @@
 import axios from 'axios';
 
+// Get API URL from localStorage or env
+const getApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('api_url');
+    if (stored) return stored;
+  }
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+};
+
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  baseURL: getApiUrl(),
   headers: {
     'Content-Type': 'application/json',
   },
-});
+};
+
+// Update baseURL if it changes in localStorage
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'api_url') {
+      api.defaults.baseURL = e.newValue || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    }
+  });
+}
 
 // Types
 export interface Persona {

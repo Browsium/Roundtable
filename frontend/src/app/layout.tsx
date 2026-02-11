@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -25,17 +26,20 @@ export default function RootLayout({
                   <h1 className="text-2xl font-bold text-gray-900">Persona Roundtable</h1>
                   <p className="text-sm text-gray-500">AI-Powered Marketing Copy Review</p>
                 </div>
-                <nav className="flex space-x-4">
-                  <a href="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    New Analysis
-                  </a>
-                  <a href="/sessions" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    History
-                  </a>
-                  <a href="/personas" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    Personas
-                  </a>
-                </nav>
+            <nav className="flex space-x-4">
+              <Link href="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                New Analysis
+              </Link>
+              <Link href="/sessions" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                History
+              </Link>
+              <Link href="/personas" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                Personas
+              </Link>
+              <Link href="/settings" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                Settings
+              </Link>
+            </nav>
               </div>
             </div>
           </header>
