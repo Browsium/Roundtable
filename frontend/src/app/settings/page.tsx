@@ -5,14 +5,16 @@ import { Settings, Check, AlertCircle } from 'lucide-react';
 
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [showSavedMessage, setShowSavedMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [storedValue, setStoredValue] = useState<string | null>(null);
 
   useEffect(() => {
     // Load saved API URL
     const saved = localStorage.getItem('api_url');
     const defaultUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     setApiUrl(saved || defaultUrl);
+    setStoredValue(saved);
   }, []);
 
   const handleSave = () => {
@@ -20,9 +22,10 @@ export default function SettingsPage() {
       // Validate URL
       new URL(apiUrl);
       localStorage.setItem('api_url', apiUrl);
-      setSaved(true);
+      setStoredValue(apiUrl);
+      setShowSavedMessage(true);
       setError(null);
-      setTimeout(() => setSaved(false), 3000);
+      setTimeout(() => setShowSavedMessage(false), 3000);
     } catch {
       setError('Please enter a valid URL');
     }
@@ -32,8 +35,9 @@ export default function SettingsPage() {
     const defaultUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     localStorage.removeItem('api_url');
     setApiUrl(defaultUrl);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    setStoredValue(null);
+    setShowSavedMessage(true);
+    setTimeout(() => setShowSavedMessage(false), 3000);
   };
 
   return (
@@ -73,7 +77,7 @@ export default function SettingsPage() {
             </div>
           )}
 
-          {saved && (
+          {showSavedMessage && (
             <div className="flex items-center gap-2 text-green-600 text-sm">
               <Check className="h-4 w-4" />
               Settings saved successfully
@@ -109,7 +113,7 @@ export default function SettingsPage() {
           <div className="flex justify-between">
             <span className="text-gray-600">Stored in localStorage:</span>
             <span className="font-mono text-gray-900">
-              {localStorage.getItem('api_url') || 'Not set'}
+              {storedValue || 'Not set'}
             </span>
           </div>
           <div className="flex justify-between">
