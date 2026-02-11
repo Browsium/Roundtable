@@ -101,11 +101,11 @@ export default function SessionsPage() {
       ) : (
         <div className="space-y-4">
           {sessions.map((session) => (
-            <Link
-              key={session.id}
-              href={`/sessions/${session.id}`}
-              className="block bg-white border rounded-lg p-6 hover:shadow-md transition-shadow"
-            >
+<Link
+            key={session.id}
+            href={`/sessions/detail?id=${session.id}`}
+            className="block bg-white border rounded-lg p-6 hover:shadow-md transition-shadow"
+          >
               <div className="flex items-start justify-between">
                 <div className="flex items-start gap-4">
                   <FileText className="h-8 w-8 text-gray-400 flex-shrink-0" />

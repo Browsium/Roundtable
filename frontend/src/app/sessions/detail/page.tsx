@@ -1,25 +1,25 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
 import { 
-  FileText, 
-  Clock, 
-  CheckCircle, 
-  AlertCircle, 
-  XCircle, 
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  Share2,
-  Download
+FileText, 
+Clock, 
+CheckCircle, 
+AlertCircle, 
+XCircle, 
+RefreshCw,
+ChevronDown,
+ChevronUp,
+Share2,
+Download
 } from 'lucide-react';
 import { sessionApi, Session, Analysis } from '@/lib/api';
 
 export default function SessionDetailPage() {
-  const params = useParams();
-  const sessionId = params.id as string;
+const searchParams = useSearchParams();
+const sessionId = searchParams.get('id') || '';
   
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
