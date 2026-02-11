@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: roundtable-backend
+    runtime: python
+    plan: free
+    region: oregon  # or frankfurt for EU
+    buildCommand: |
+      pip install -r requirements.txt
+      # Install Claude Code CLI
+      curl -fsSL https://claude.ai/install.sh | sh
+    startCommand: |
+      # Ensure Claude is in PATH and authenticated
+      export PATH="$HOME/.local/bin:$PATH"
+      uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        value: sqlite:///./data/roundtable.db
+      - key: ADMIN_USERS
+        value: matt@browsium.com
+      - key: DEFAULT_AI_BACKEND
+        value: claude
+      - key: AI_TIMEOUT
+        value: "120"
+      - key: AI_RETRY_ATTEMPTS
+        value: "3"
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+      - key: PERSONAS_DIR
+        value: ./personas
+      - key: DEBUG
+        value: "false"
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
