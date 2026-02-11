@@ -1,26 +1,26 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
-import { 
-FileText, 
-Clock, 
-CheckCircle, 
-AlertCircle, 
-XCircle, 
-RefreshCw,
-ChevronDown,
-ChevronUp,
-Share2,
-Download
+import {
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  XCircle,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Share2,
+  Download
 } from 'lucide-react';
 import { sessionApi, Session, Analysis } from '@/lib/api';
 
-export default function SessionDetailPage() {
-const searchParams = useSearchParams();
-const sessionId = searchParams.get('id') || '';
-  
+function SessionDetailContent() {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get('id') || '';
+
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ const sessionId = searchParams.get('id') || '';
     try {
       const data = await sessionApi.get(sessionId);
       setSession(data);
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to load session');
     } finally {
       setLoading(false);
@@ -54,7 +54,7 @@ const sessionId = searchParams.get('id') || '';
     try {
       await sessionApi.retryAnalysis(sessionId, personaId);
       await loadSession();
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to retry analysis');
     } finally {
       setRetryingId(null);
@@ -159,12 +159,12 @@ const sessionId = searchParams.get('id') || '';
       {/* Analyses */}
       <div className="space-y-4">
         {session.analyses?.map((analysis) => (
-          <div 
-            key={analysis.id} 
+          <div
+            key={analysis.id}
             className="bg-white border rounded-lg overflow-hidden"
           >
             {/* Analysis Header */}
-            <div 
+            <div
               className="p-6 flex items-start justify-between cursor-pointer hover:bg-gray-50"
               onClick={() => setExpandedAnalysis(expandedAnalysis === analysis.id ? null : analysis.id)}
             >
@@ -240,10 +240,10 @@ const sessionId = searchParams.get('id') || '';
                         <div key={idx} className="bg-white p-4 rounded border">
                           <p className="font-medium text-red-700 mb-2">{issue.issue}</p>
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Original:</span> "{issue.specific_example_from_content}"
+                            <span className="font-medium">Original:</span> &ldquo;{issue.specific_example_from_content}&rdquo;
                           </div>
                           <div className="text-sm text-green-700">
-                            <span className="font-medium">Suggested:</span> "{issue.suggested_rewrite}"
+                            <span className="font-medium">Suggested:</span> &ldquo;{issue.suggested_rewrite}&rdquo;
                           </div>
                         </div>
                       ))}
@@ -272,7 +272,7 @@ const sessionId = searchParams.get('id') || '';
                       {analysis.rewritten_suggestions_json.rewritten_headline && (
                         <div>
                           <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
-                          <p className="text-sm text-gray-600 italic">"{analysis.rewritten_suggestions_json.rewritten_headline}"</p>
+                          <p className="text-sm text-gray-600 italic">&ldquo;{analysis.rewritten_suggestions_json.rewritten_headline}&rdquo;</p>
                         </div>
                       )}
                     </div>
@@ -290,5 +290,17 @@ const sessionId = searchParams.get('id') || '';
         ))}
       </div>
     </div>
+  );
+}
+
+export default function SessionDetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    }>
+      <SessionDetailContent />
+    </Suspense>
   );
 }
