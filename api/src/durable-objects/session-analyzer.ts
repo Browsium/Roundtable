@@ -157,14 +157,28 @@ export class SessionAnalyzer {
 
       await db.updateSession(sessionId, { status: 'completed' });
 
-    } catch (error) {
-      sendMessage({
-        type: 'error',
-        error: String(error),
-      });
-      await db.updateSession(sessionId, { status: 'failed' });
+  } catch (error) {
+    const errorMessage = String(error);
+    console.error('Analysis failed:', errorMessage);
+    sendMessage({
+      type: 'error',
+      error: errorMessage,
+    });
+    await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage });
+    
+    // Mark all pending analyses as failed
+    const analyses = await db.getAnalyses(sessionId);
+    for (const analysis of analyses) {
+      if (analysis.status === 'pending' || analysis.status === 'running') {
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: errorMessage,
+          completed_at: new Date().toISOString(),
+        });
+      }
     }
   }
+}
 
   private async analyzePersona(
     sessionId: string,
