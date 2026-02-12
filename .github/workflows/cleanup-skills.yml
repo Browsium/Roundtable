@@ -1,0 +1,19 @@
+name: Cleanup Old Skills
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup old skills
+        run: |
+          curl -X POST https://bypass.badrobots.net/clibridge/admin/skills/cleanup \
+            -H "CF-Access-Client-Id: ${{ secrets.CLIBRIDGE_CLIENT_ID }}" \
+            -H "CF-Access-Client-Secret: ${{ secrets.CLIBRIDGE_CLIENT_SECRET }}" \
+            -H "X-API-Key: ${{ secrets.CLIBRIDGE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"skill_prefix":"roundtable-","older_than_days":60}'

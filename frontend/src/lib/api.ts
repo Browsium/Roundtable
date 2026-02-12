@@ -1,183 +1,205 @@
-import axios from 'axios';
+import type { Persona, Session, Analysis } from './types';
 
-// Get API URL from localStorage or env
+// Get API URL from environment or fallback
 const getApiUrl = () => {
   if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('api_url');
-    if (stored) return stored;
+    return process.env.NEXT_PUBLIC_API_URL || 'https://roundtable-api.browsium.workers.dev';
   }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return 'https://roundtable-api.browsium.workers.dev';
 };
 
-const api = axios.create({
-  baseURL: getApiUrl(),
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+const API_BASE = getApiUrl();
 
-// Update baseURL if it changes in localStorage
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'api_url') {
-      api.defaults.baseURL = e.newValue || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    }
-  });
+// Helper for fetch with error handling
+async function fetchWithError(url: string, options?: RequestInit): Promise<any> {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`HTTP ${response.status}: ${error}`);
+  }
+  return response.json();
 }
 
-// Types
-export interface Persona {
-  id: string;
-  name: string;
-  role: string;
-  is_system: boolean;
-  is_custom: boolean;
-  profile_json: {
-    background: string;
-    professional_priorities: string[];
-    marketing_pet_peeves: string[];
-    evaluation_rubric: Record<string, string>;
-    convince_me_criteria: string;
-  };
-}
-
-export interface Session {
-  id: string;
-  file_name: string;
-  file_metadata?: {
-    filename: string;
-    size_bytes: number;
-    extension: string;
-    version?: string;
-  };
-  selected_persona_ids: string[];
-  status: 'uploaded' | 'analyzing' | 'completed' | 'partial' | 'failed';
-  share_with_emails?: string[];
-  analyses?: Analysis[];
-  created_at: string;
-  updated_at?: string;
-}
-
-export interface Analysis {
-  id: number;
-  persona_id: string;
-  persona_name?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  score_json?: {
-    relevance: { score: number; commentary: string };
-    technical_credibility: { score: number; commentary: string };
-    differentiation: { score: number; commentary: string };
-    actionability: { score: number; commentary: string };
-    trust_signals: { score: number; commentary: string };
-    language_fit: { score: number; commentary: string };
-  };
-  top_issues_json?: Array<{
-    issue: string;
-    specific_example_from_content: string;
-    suggested_rewrite: string;
-  }>;
-  rewritten_suggestions_json?: {
-    what_works_well: string[];
-    overall_verdict: string;
-    rewritten_headline: string;
-  };
-  error_message?: string;
-}
-
-// API functions
+// Persona API
 export const personaApi = {
   getAll: async (): Promise<Persona[]> => {
-    const response = await api.get('/api/personas/');
-    return response.data;
+    return fetchWithError(`${API_BASE}/personas`);
   },
-  
+
   get: async (id: string): Promise<Persona> => {
-    const response = await api.get(`/api/personas/${id}`);
-    return response.data;
+    return fetchWithError(`${API_BASE}/personas/${id}`);
   },
-  
+
   create: async (personaData: { profile_json: any }): Promise<Persona> => {
-    const response = await api.post('/api/personas/', personaData);
-    return response.data;
+    return fetchWithError(`${API_BASE}/personas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(personaData),
+    });
   },
-  
+
   update: async (id: string, personaData: { profile_json: any }): Promise<Persona> => {
-    const response = await api.put(`/api/personas/${id}`, personaData);
-    return response.data;
+    return fetchWithError(`${API_BASE}/personas/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(personaData),
+    });
   },
-  
+
   delete: async (id: string): Promise<void> => {
-    await api.delete(`/api/personas/${id}`);
+    await fetchWithError(`${API_BASE}/personas/${id}`, {
+      method: 'DELETE',
+    });
   },
-  
-  reload: async (): Promise<{ message: string; loaded: number; removed: number }> => {
-    const response = await api.post('/api/personas/reload');
-    return response.data;
+
+  deploy: async (id: string): Promise<{ message: string; skill_name: string }> => {
+    return fetchWithError(`${API_BASE}/personas/${id}/deploy`, {
+      method: 'POST',
+    });
   },
 };
 
+// Session API
 export const sessionApi = {
   getAll: async (): Promise<Session[]> => {
-    const response = await api.get('/api/sessions/');
-    return response.data;
+    return fetchWithError(`${API_BASE}/sessions`);
   },
-  
-  get: async (id: string): Promise<Session> => {
-    const response = await api.get(`/api/sessions/${id}`);
-    return response.data;
+
+  get: async (id: string): Promise<Session & { analyses?: Analysis[] }> => {
+    return fetchWithError(`${API_BASE}/sessions/${id}`);
   },
-  
-  create: async (file: File, selectedPersonaIds: string[]): Promise<Session> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('selected_persona_ids', JSON.stringify(selectedPersonaIds));
-    
-    const response = await api.post('/api/sessions/', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+
+  create: async (
+    fileName: string,
+    fileSize: number,
+    fileExtension: string,
+    selectedPersonaIds: string[]
+  ): Promise<Session> => {
+    return fetchWithError(`${API_BASE}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_name: fileName,
+        file_size_bytes: fileSize,
+        file_extension: fileExtension,
+        selected_persona_ids: selectedPersonaIds,
+      }),
     });
-    return response.data;
   },
-  
-  startAnalysis: async (id: string): Promise<{ message: string; session_id: string }> => {
-    const response = await api.post(`/api/sessions/${id}/analyze`);
-    return response.data;
+
+  update: async (id: string, updates: Partial<Session>): Promise<Session> => {
+    return fetchWithError(`${API_BASE}/sessions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
   },
-  
-  retryAnalysis: async (sessionId: string, personaId: string): Promise<any> => {
-    const response = await api.post(`/api/sessions/${sessionId}/retry/${personaId}`);
-    return response.data;
-  },
-  
-  share: async (id: string, emails: string[]): Promise<void> => {
-    await api.post(`/api/sessions/${id}/share`, { emails });
-  },
-  
+
   delete: async (id: string): Promise<void> => {
-    await api.delete(`/api/sessions/${id}`);
+    await fetchWithError(`${API_BASE}/sessions/${id}`, {
+      method: 'DELETE',
+    });
   },
 };
 
-export const adminApi = {
-  listUsers: async (): Promise<any[]> => {
-    const response = await api.get('/api/admin/users');
-    return response.data;
+// R2 Upload API
+export const r2Api = {
+  getUploadUrl: async (sessionId: string, filename: string): Promise<{ uploadUrl: string; method: string }> => {
+    return fetchWithError(`${API_BASE}/r2/upload-url?session_id=${sessionId}&filename=${encodeURIComponent(filename)}`);
   },
-  
-  listSessions: async (): Promise<any[]> => {
-    const response = await api.get('/api/admin/sessions');
-    return response.data;
-  },
-  
-  listBackends: async (): Promise<{ available: string[]; default: string }> => {
-    const response = await api.get('/api/admin/backends');
-    return response.data;
-  },
-  
-  promotePersona: async (personaId: string): Promise<void> => {
-    await api.post(`/api/admin/personas/${personaId}/promote`);
+
+  uploadFile: async (sessionId: string, file: File): Promise<{ success: boolean; key: string; size: number }> => {
+    const uploadUrl = `${API_BASE}/r2/upload/${sessionId}/${encodeURIComponent(file.name)}`;
+    
+    const response = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+      body: await file.arrayBuffer(),
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Upload failed: ${error}`);
+    }
+    
+    return response.json();
   },
 };
 
-export default api;
+// WebSocket for streaming analysis
+export class AnalysisWebSocket {
+  private ws: WebSocket | null = null;
+  private sessionId: string;
+  private onMessage: (data: any) => void;
+  private onError: (error: any) => void;
+  private reconnectAttempts = 0;
+  private maxReconnects = 3;
+  private reconnectTimeouts = [2000, 4000, 8000]; // Exponential backoff
+
+  constructor(
+    sessionId: string,
+    onMessage: (data: any) => void,
+    onError: (error: any) => void
+  ) {
+    this.sessionId = sessionId;
+    this.onMessage = onMessage;
+    this.onError = onError;
+  }
+
+  connect(): void {
+    const wsUrl = API_BASE.replace('https://', 'wss://') + `/sessions/${this.sessionId}/analyze`;
+    
+    this.ws = new WebSocket(wsUrl);
+    
+    this.ws.onopen = () => {
+      this.reconnectAttempts = 0;
+      // Start analysis
+      this.send({ action: 'start_analysis', session_id: this.sessionId });
+    };
+    
+    this.ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        this.onMessage(data);
+      } catch (error) {
+        this.onError(error);
+      }
+    };
+    
+    this.ws.onerror = (error) => {
+      this.onError(error);
+    };
+    
+    this.ws.onclose = () => {
+      if (this.reconnectAttempts < this.maxReconnects) {
+        const timeout = this.reconnectTimeouts[this.reconnectAttempts];
+        setTimeout(() => {
+          this.reconnectAttempts++;
+          this.connect();
+        }, timeout);
+      }
+    };
+  }
+
+  send(data: any): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+
+  close(): void {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+}
+
+export default {
+  personaApi,
+  sessionApi,
+  r2Api,
+  AnalysisWebSocket,
+};

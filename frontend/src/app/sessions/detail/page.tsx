@@ -15,7 +15,8 @@ import {
   Share2,
   Download
 } from 'lucide-react';
-import { sessionApi, Session, Analysis } from '@/lib/api';
+import { sessionApi } from '@/lib/api';
+import type { Session, Analysis } from '@/lib/types';
 
 function SessionDetailContent() {
   const searchParams = useSearchParams();
@@ -49,16 +50,9 @@ function SessionDetailContent() {
     }
   };
 
-  const handleRetry = async (personaId: string, analysisId: number) => {
-    setRetryingId(analysisId);
-    try {
-      await sessionApi.retryAnalysis(sessionId, personaId);
-      await loadSession();
-    } catch (_err) {
-      setError('Failed to retry analysis');
-    } finally {
-      setRetryingId(null);
-    }
+  const handleRetry = async (_personaId: string, _analysisId: number) => {
+    // Retry not implemented yet - would reconnect WebSocket and restart analysis
+    setError('Retry functionality coming soon');
   };
 
   const getStatusIcon = (status: string) => {
@@ -76,15 +70,22 @@ function SessionDetailContent() {
 
   const calculateOverallScore = (analysis: Analysis) => {
     if (!analysis.score_json) return 0;
-    const scores = [
-      analysis.score_json.relevance?.score || 0,
-      analysis.score_json.technical_credibility?.score || 0,
-      analysis.score_json.differentiation?.score || 0,
-      analysis.score_json.actionability?.score || 0,
-      analysis.score_json.trust_signals?.score || 0,
-      analysis.score_json.language_fit?.score || 0,
-    ];
-    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+    try {
+      const scoreData = typeof analysis.score_json === 'string' 
+        ? JSON.parse(analysis.score_json) 
+        : analysis.score_json;
+      const scores = [
+        scoreData.relevance?.score || 0,
+        scoreData.technical_credibility?.score || 0,
+        scoreData.differentiation?.score || 0,
+        scoreData.actionability?.score || 0,
+        scoreData.trust_signals?.score || 0,
+        scoreData.language_fit?.score || 0,
+      ];
+      return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+    } catch {
+      return 0;
+    }
   };
 
   if (loading) {
@@ -132,25 +133,34 @@ function SessionDetailContent() {
             {session.status === 'completed' && (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
-            {session.status === 'partial' && (
-              <AlertCircle className="h-8 w-8 text-yellow-500" />
-            )}
             {session.status === 'failed' && (
               <XCircle className="h-8 w-8 text-red-500" />
             )}
             {session.status === 'analyzing' && (
               <Clock className="h-8 w-8 text-blue-500 animate-spin" />
             )}
+            {session.status === 'uploaded' && (
+              <AlertCircle className="h-8 w-8 text-yellow-500" />
+            )}
             <div>
               <p className="font-medium text-gray-900">
                 {session.status === 'completed' && 'All analyses complete'}
-                {session.status === 'partial' && 'Some analyses failed'}
                 {session.status === 'failed' && 'All analyses failed'}
                 {session.status === 'analyzing' && 'Analysis in progress...'}
+                {session.status === 'uploaded' && 'Document uploaded'}
               </p>
-              <p className="text-sm text-gray-600">
-                {session.analyses?.filter(a => a.status === 'completed').length || 0} of {session.selected_persona_ids.length} complete
-              </p>
+<p className="text-sm text-gray-600">
+            {session.analyses?.filter(a => a.status === 'completed').length || 0} of {(() => {
+              try {
+                const ids = typeof session.selected_persona_ids === 'string' 
+                  ? JSON.parse(session.selected_persona_ids) 
+                  : session.selected_persona_ids;
+                return ids.length;
+              } catch {
+                return 0;
+              }
+            })()} complete
+          </p>
             </div>
           </div>
         </div>
@@ -211,55 +221,75 @@ function SessionDetailContent() {
             {/* Analysis Details */}
             {expandedAnalysis === analysis.id && analysis.status === 'completed' && (
               <div className="border-t px-6 py-6 bg-gray-50">
-                {analysis.score_json && (
+{analysis.score_json && (() => {
+              try {
+                const scores = typeof analysis.score_json === 'string' 
+                  ? JSON.parse(analysis.score_json) 
+                  : analysis.score_json;
+                return (
                   <div className="mb-6">
                     <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {Object.entries(analysis.score_json).map(([key, value]) => (
+                      {Object.entries(scores).map(([key, value]: [string, any]) => (
                         <div key={key} className="bg-white p-3 rounded border">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-xs text-gray-600 capitalize">
                               {key.replace('_', ' ')}
                             </span>
                             <span className="text-lg font-bold text-blue-600">
-                              {value.score}/10
+                              {value?.score || 0}/10
                             </span>
                           </div>
-                          <p className="text-xs text-gray-500">{value.commentary}</p>
+                          <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
                         </div>
                       ))}
                     </div>
                   </div>
-                )}
+                );
+              } catch { return null; }
+            })()}
 
-                {analysis.top_issues_json && analysis.top_issues_json.length > 0 && (
+{analysis.top_issues_json && (() => {
+              try {
+                const issues = typeof analysis.top_issues_json === 'string' 
+                  ? JSON.parse(analysis.top_issues_json) 
+                  : analysis.top_issues_json;
+                if (!Array.isArray(issues) || issues.length === 0) return null;
+                return (
                   <div className="mb-6">
                     <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
                     <div className="space-y-3">
-                      {analysis.top_issues_json.map((issue, idx) => (
+                      {issues.map((issue: any, idx: number) => (
                         <div key={idx} className="bg-white p-4 rounded border">
-                          <p className="font-medium text-red-700 mb-2">{issue.issue}</p>
+                          <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Original:</span> &ldquo;{issue.specific_example_from_content}&rdquo;
+                            <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
                           </div>
                           <div className="text-sm text-green-700">
-                            <span className="font-medium">Suggested:</span> &ldquo;{issue.suggested_rewrite}&rdquo;
+                            <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                )}
+                );
+              } catch { return null; }
+            })()}
 
-                {analysis.rewritten_suggestions_json && (
+{analysis.rewritten_suggestions_json && (() => {
+              try {
+                const suggestions = typeof analysis.rewritten_suggestions_json === 'string' 
+                  ? JSON.parse(analysis.rewritten_suggestions_json) 
+                  : analysis.rewritten_suggestions_json;
+                return (
                   <div>
                     <h4 className="text-sm font-medium text-gray-900 mb-3">Additional Feedback</h4>
                     <div className="bg-white p-4 rounded border">
-                      {analysis.rewritten_suggestions_json.what_works_well?.length > 0 && (
+                      {suggestions?.what_works_well?.length > 0 && (
                         <div className="mb-3">
                           <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
                           <ul className="list-disc list-inside text-sm text-gray-600">
-                            {analysis.rewritten_suggestions_json.what_works_well.map((item, idx) => (
+                            {suggestions.what_works_well.map((item: string, idx: number) => (
                               <li key={idx}>{item}</li>
                             ))}
                           </ul>
@@ -267,17 +297,19 @@ function SessionDetailContent() {
                       )}
                       <div className="mb-3">
                         <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
-                        <p className="text-sm text-gray-600">{analysis.rewritten_suggestions_json.overall_verdict}</p>
+                        <p className="text-sm text-gray-600">{suggestions?.overall_verdict || ''}</p>
                       </div>
-                      {analysis.rewritten_suggestions_json.rewritten_headline && (
+                      {suggestions?.rewritten_headline && (
                         <div>
                           <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
-                          <p className="text-sm text-gray-600 italic">&ldquo;{analysis.rewritten_suggestions_json.rewritten_headline}&rdquo;</p>
+                          <p className="text-sm text-gray-600 italic">&ldquo;{suggestions.rewritten_headline}&rdquo;</p>
                         </div>
                       )}
                     </div>
                   </div>
-                )}
+                );
+              } catch { return null; }
+            })()}
 
                 {analysis.error_message && (
                   <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">

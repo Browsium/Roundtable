@@ -1,0 +1,28 @@
+name = "roundtable-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "roundtable-db"
+database_id = "31f5b7ba-5993-4df4-91f6-13e53fa83208"
+
+# R2 Bucket
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "roundtable-documents"
+
+# Environment Variables
+[vars]
+CLIBRIDGE_URL = "https://bypass.badrobots.net/clibridge"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "SESSION_ANALYZER"
+class_name = "SessionAnalyzer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionAnalyzer"]

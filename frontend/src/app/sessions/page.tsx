@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { FileText, Clock, CheckCircle, AlertCircle, XCircle, ArrowRight } from 'lucide-react';
-import { sessionApi, Session } from '@/lib/api';
+import { sessionApi } from '@/lib/api';
+import type { Session } from '@/lib/types';
 import Link from 'next/link';
 
 export default function SessionsPage() {
@@ -28,35 +29,31 @@ export default function SessionsPage() {
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle className="h-5 w-5 text-green-500" />;
-      case 'partial':
-        return <AlertCircle className="h-5 w-5 text-yellow-500" />;
-      case 'failed':
-        return <XCircle className="h-5 w-5 text-red-500" />;
-      case 'analyzing':
-        return <Clock className="h-5 w-5 text-blue-500 animate-spin" />;
-      default:
-        return <Clock className="h-5 w-5 text-gray-400" />;
-    }
-  };
+const getStatusIcon = (status: string) => {
+  switch (status) {
+    case 'completed':
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    case 'failed':
+      return <XCircle className="h-5 w-5 text-red-500" />;
+    case 'analyzing':
+      return <Clock className="h-5 w-5 text-blue-500 animate-spin" />;
+    default:
+      return <Clock className="h-5 w-5 text-gray-400" />;
+  }
+};
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'Completed';
-      case 'partial':
-        return 'Partial (Some failed)';
-      case 'failed':
-        return 'Failed';
-      case 'analyzing':
-        return 'Analyzing...';
-      default:
-        return 'Uploaded';
-    }
-  };
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'completed':
+      return 'Completed';
+    case 'failed':
+      return 'Failed';
+    case 'analyzing':
+      return 'Analyzing...';
+    default:
+      return 'Uploaded';
+  }
+};
 
   if (loading) {
     return (
@@ -113,28 +110,31 @@ export default function SessionsPage() {
                     <h3 className="text-lg font-medium text-gray-900">
                       {session.file_name}
                     </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {format(new Date(session.created_at), 'MMM d, yyyy h:mm a')}
-                      {session.file_metadata?.version && (
-                        <span className="ml-2 text-xs bg-gray-100 px-2 py-0.5 rounded">
-                          v{session.file_metadata.version}
-                        </span>
-                      )}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      {getStatusIcon(session.status)}
-                      <span className={`text-sm font-medium
-                        ${session.status === 'completed' ? 'text-green-600' : ''}
-                        ${session.status === 'partial' ? 'text-yellow-600' : ''}
-                        ${session.status === 'failed' ? 'text-red-600' : ''}
-                        ${session.status === 'analyzing' ? 'text-blue-600' : ''}
-                      `}>
-                        {getStatusText(session.status)}
+<p className="text-sm text-gray-500 mt-1">
+                {format(new Date(session.created_at), 'MMM d, yyyy h:mm a')}
+              </p>
+              <div className="flex items-center gap-2 mt-2">
+                {getStatusIcon(session.status)}
+                <span className={`text-sm font-medium
+                  ${session.status === 'completed' ? 'text-green-600' : ''}
+                  ${session.status === 'failed' ? 'text-red-600' : ''}
+                  ${session.status === 'analyzing' ? 'text-blue-600' : ''}
+                `}>
+                  {getStatusText(session.status)}
                       </span>
-                      <span className="text-gray-300">|</span>
-                      <span className="text-sm text-gray-500">
-                        {session.selected_persona_ids.length} personas
-                      </span>
+<span className="text-gray-300">|</span>
+                <span className="text-sm text-gray-500">
+                  {(() => {
+                    try {
+                      const ids = typeof session.selected_persona_ids === 'string' 
+                        ? JSON.parse(session.selected_persona_ids) 
+                        : session.selected_persona_ids;
+                      return `${ids.length} personas`;
+                    } catch {
+                      return '0 personas';
+                    }
+                  })()}
+                </span>
                     </div>
                   </div>
                 </div>

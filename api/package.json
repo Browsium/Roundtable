@@ -1,0 +1,25 @@
+{
+  "name": "roundtable-api",
+  "version": "1.0.0",
+  "description": "Roundtable API - Cloudflare Workers backend for CLIBridge integration",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "d1:execute": "wrangler d1 execute roundtable-db",
+    "d1:migrate": "wrangler d1 migrations apply roundtable-db"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260210.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.54.0"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  }
+}

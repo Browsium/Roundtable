@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Plus, Edit, Trash2, RefreshCw, User } from 'lucide-react';
-import { personaApi, Persona } from '@/lib/api';
+import { personaApi } from '@/lib/api';
+import type { Persona } from '@/lib/types';
 
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -29,12 +30,8 @@ export default function PersonasPage() {
   };
 
   const handleReload = async () => {
-    try {
-      await personaApi.reload();
-      await loadPersonas();
-    } catch (err) {
-      setError('Failed to reload personas');
-    }
+    // Reload from D1 - just re-fetch
+    await loadPersonas();
   };
 
   const handleDelete = async (id: string) => {
@@ -65,7 +62,11 @@ export default function PersonasPage() {
 
   const startEdit = (persona: Persona) => {
     setEditingPersona(persona);
-    setFormData(persona.profile_json);
+    // Parse profile_json if it's a string
+    const profile = typeof persona.profile_json === 'string' 
+      ? JSON.parse(persona.profile_json) 
+      : persona.profile_json;
+    setFormData(profile || {});
   };
 
   const startCreate = () => {
@@ -211,20 +212,29 @@ export default function PersonasPage() {
                   <p className="text-sm text-gray-600">{persona.role}</p>
                 </div>
               </div>
-              {persona.is_system && (
+{persona.is_system && (
                 <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded">
                   System
                 </span>
               )}
-              {persona.is_custom && (
+              {!persona.is_system && (
                 <span className="px-2 py-1 bg-blue-100 text-blue-600 text-xs rounded">
                   Custom
                 </span>
               )}
             </div>
-            
+
             <p className="text-sm text-gray-600 mb-4 line-clamp-3">
-              {persona.profile_json?.background}
+              {(() => {
+                try {
+                  const profile = typeof persona.profile_json === 'string' 
+                    ? JSON.parse(persona.profile_json) 
+                    : persona.profile_json;
+                  return profile?.background || '';
+                } catch (e) {
+                  return '';
+                }
+              })()}
             </p>
             
             <div className="flex gap-2">

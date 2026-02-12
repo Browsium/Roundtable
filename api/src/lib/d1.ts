@@ -1,0 +1,179 @@
+import type { D1Database } from '@cloudflare/workers-types';
+
+export interface Persona {
+  id: string;
+  name: string;
+  role: string;
+  profile_json: string;
+  version: string;
+  skill_name: string;
+  skill_path: string;
+  is_system: boolean;
+  status: 'draft' | 'deployed' | 'failed';
+  created_at: string;
+  updated_at: string;
+  deployed_at?: string;
+}
+
+export interface Session {
+  id: string;
+  user_email: string;
+  file_name: string;
+  file_r2_key: string;
+  file_size_bytes: number;
+  file_extension: string;
+  selected_persona_ids: string;
+  status: 'uploaded' | 'analyzing' | 'completed' | 'failed';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Analysis {
+  id: number;
+  session_id: string;
+  persona_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  score_json?: string;
+  top_issues_json?: string;
+  rewritten_suggestions_json?: string;
+  error_message?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export class D1Client {
+  private db: D1Database;
+
+  constructor(db: D1Database) {
+    this.db = db;
+  }
+
+  // Persona operations
+  async getPersonas(): Promise<Persona[]> {
+    const result = await this.db.prepare('SELECT * FROM personas ORDER BY name').all<Persona>();
+    return result.results || [];
+  }
+
+  async getPersona(id: string): Promise<Persona | null> {
+    const result = await this.db.prepare('SELECT * FROM personas WHERE id = ?').bind(id).first<Persona>();
+    return result || null;
+  }
+
+  async createPersona(persona: Omit<Persona, 'created_at' | 'updated_at'>): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO personas (id, name, role, profile_json, version, skill_name, skill_path, is_system, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      persona.id,
+      persona.name,
+      persona.role,
+      persona.profile_json,
+      persona.version,
+      persona.skill_name,
+      persona.skill_path,
+      persona.is_system ? 1 : 0,
+      persona.status,
+      now,
+      now
+    ).run();
+  }
+
+  async updatePersona(id: string, updates: Partial<Persona>): Promise<void> {
+    const now = new Date().toISOString();
+    const fields = Object.keys(updates).filter(k => k !== 'id');
+    if (fields.length === 0) return;
+    
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => (updates as any)[f]);
+    values.push(now, id);
+    
+    await this.db.prepare(`UPDATE personas SET ${setClause}, updated_at = ? WHERE id = ?`).bind(...values).run();
+  }
+
+  async deletePersona(id: string): Promise<void> {
+    await this.db.prepare('DELETE FROM personas WHERE id = ?').bind(id).run();
+  }
+
+  // Session operations
+  async getSessions(userEmail: string): Promise<Session[]> {
+    const result = await this.db.prepare('SELECT * FROM sessions WHERE user_email = ? ORDER BY created_at DESC').bind(userEmail).all<Session>();
+    return result.results || [];
+  }
+
+  async getSession(id: string): Promise<Session | null> {
+    const result = await this.db.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first<Session>();
+    return result || null;
+  }
+
+  async createSession(session: Omit<Session, 'created_at' | 'updated_at'>): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO sessions (id, user_email, file_name, file_r2_key, file_size_bytes, file_extension, selected_persona_ids, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      session.id,
+      session.user_email,
+      session.file_name,
+      session.file_r2_key,
+      session.file_size_bytes,
+      session.file_extension,
+      session.selected_persona_ids,
+      session.status,
+      now,
+      now
+    ).run();
+  }
+
+  async updateSession(id: string, updates: Partial<Session>): Promise<void> {
+    const now = new Date().toISOString();
+    const fields = Object.keys(updates).filter(k => k !== 'id');
+    if (fields.length === 0) return;
+    
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => (updates as any)[f]);
+    values.push(now, id);
+    
+    await this.db.prepare(`UPDATE sessions SET ${setClause}, updated_at = ? WHERE id = ?`).bind(...values).run();
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.db.prepare('DELETE FROM sessions WHERE id = ?').bind(id).run();
+    await this.db.prepare('DELETE FROM analyses WHERE session_id = ?').bind(id).run();
+  }
+
+  // Analysis operations
+  async getAnalyses(sessionId: string): Promise<Analysis[]> {
+    const result = await this.db.prepare('SELECT * FROM analyses WHERE session_id = ?').bind(sessionId).all<Analysis>();
+    return result.results || [];
+  }
+
+  async createAnalysis(analysis: Omit<Analysis, 'id'>): Promise<number> {
+    const result = await this.db.prepare(
+      `INSERT INTO analyses (session_id, persona_id, status, score_json, top_issues_json, rewritten_suggestions_json, error_message, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      analysis.session_id,
+      analysis.persona_id,
+      analysis.status,
+      analysis.score_json || null,
+      analysis.top_issues_json || null,
+      analysis.rewritten_suggestions_json || null,
+      analysis.error_message || null,
+      analysis.started_at || null,
+      analysis.completed_at || null
+    ).run();
+    return result.meta?.last_row_id || 0;
+  }
+
+  async updateAnalysis(id: number, updates: Partial<Analysis>): Promise<void> {
+    const fields = Object.keys(updates).filter(k => k !== 'id');
+    if (fields.length === 0) return;
+    
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => (updates as any)[f]);
+    values.push(id);
+    
+    await this.db.prepare(`UPDATE analyses SET ${setClause} WHERE id = ?`).bind(...values).run();
+  }
+}

@@ -3,7 +3,8 @@
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, Users, ArrowRight, Check, AlertCircle } from 'lucide-react';
-import { personaApi, sessionApi, Persona } from '@/lib/api';
+import { personaApi, sessionApi, r2Api } from '@/lib/api';
+import type { Persona } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 
 export default function Home() {
@@ -72,7 +73,7 @@ export default function Home() {
     loadPersonas();
   };
 
-  const handleStartAnalysis = async () => {
+const handleStartAnalysis = async () => {
     if (!file || selectedPersonas.length === 0) {
       setError('Please select at least one persona');
       return;
@@ -82,16 +83,24 @@ export default function Home() {
     setError(null);
 
     try {
-      // Create session
-      const session = await sessionApi.create(file, selectedPersonas);
-      
-      // Start analysis
-      await sessionApi.startAnalysis(session.id);
-      
-      // Redirect to results page
+      // Get file extension
+      const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+
+      // Create session (metadata only, no file)
+      const session = await sessionApi.create(
+        file.name,
+        file.size,
+        fileExtension,
+        selectedPersonas
+      );
+
+      // Upload file to R2
+      await r2Api.uploadFile(session.id, file);
+
+      // Redirect to results page where WebSocket will handle analysis
       router.push(`/sessions/${session.id}`);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to start analysis');
+      setError(err.message || 'Failed to start analysis');
       setLoading(false);
     }
   };
@@ -202,15 +211,27 @@ export default function Home() {
                       <Check className="h-3 w-3 text-white" />
                     )}
                   </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium text-gray-900">{persona.name}</h4>
-                    <p className="text-sm text-gray-600">{persona.role}</p>
-                    {persona.profile_json?.convince_me_criteria && (
-                      <p className="text-xs text-gray-500 mt-2 line-clamp-2">
-                        {persona.profile_json.convince_me_criteria}
-                      </p>
-                    )}
-                  </div>
+<div className="flex-1">
+                          <h4 className="font-medium text-gray-900">{persona.name}</h4>
+                          <p className="text-sm text-gray-600">{persona.role}</p>
+                          {(() => {
+                            try {
+                              const profile = typeof persona.profile_json === 'string' 
+                                ? JSON.parse(persona.profile_json) 
+                                : persona.profile_json;
+                              if (profile?.convince_me_criteria) {
+                                return (
+                                  <p className="text-xs text-gray-500 mt-2 line-clamp-2">
+                                    {profile.convince_me_criteria}
+                                  </p>
+                                );
+                              }
+                            } catch (e) {
+                              // Ignore parse errors
+                            }
+                            return null;
+                          })()}
+                        </div>
                 </div>
               </div>
             ))}
