@@ -1,12 +1,12 @@
-// Document processing using JavaScript libraries
-import mammoth from 'mammoth';
+// Document processing - Cloudflare Workers compatible
+// Note: Full DOCX/PDF parsing requires libraries that don't work in Workers
+// We extract what we can and use the filename as additional context
 
 export async function extractTextFromDocument(
   fileBuffer: ArrayBuffer,
   extension: string
 ): Promise<string> {
   const ext = extension.toLowerCase();
-  const buffer = Buffer.from(fileBuffer);
 
   switch (ext) {
     case '.txt':
@@ -15,35 +15,18 @@ export async function extractTextFromDocument(
       return new TextDecoder().decode(fileBuffer);
 
     case '.pdf':
-      // PDF extraction - try to extract text, fallback to placeholder
-      try {
-        // Note: pdf-parse doesn't work well in Workers
-        // For now, return placeholder with file size info
-        return `[PDF content - ${fileBuffer.byteLength} bytes. PDF parsing not fully implemented in Workers environment.]`;
-      } catch {
-        return `[PDF content - ${fileBuffer.byteLength} bytes]`;
-      }
+      // PDF extraction not available in Workers
+      return `[PDF document: ${fileBuffer.byteLength} bytes. Content extraction not available in this environment. Analysis based on filename and document metadata only.]`;
 
     case '.docx':
-      // DOCX extraction using mammoth
-      try {
-        const result = await mammoth.extractRawText({ buffer });
-        if (result.value && result.value.trim().length > 0) {
-          return result.value;
-        }
-        return `[DOCX file parsed but no text content found - ${fileBuffer.byteLength} bytes]`;
-      } catch (error) {
-        console.error('DOCX parsing error:', error);
-        return `[DOCX content - ${fileBuffer.byteLength} bytes. Parsing error: ${error}]`;
-      }
+      // DOCX extraction - mammoth doesn't work in Workers
+      // For now, return placeholder with file info
+      // TODO: Implement ZIP/XML parsing for DOCX text extraction
+      return `[DOCX document: ${fileBuffer.byteLength} bytes. Full content extraction not available in this environment. Analysis based on filename and document metadata only.]`;
 
     case '.pptx':
-      // PPTX extraction - not fully implemented
-      try {
-        return `[PPTX content - ${fileBuffer.byteLength} bytes. PPTX parsing not fully implemented in Workers environment.]`;
-      } catch {
-        return `[PPTX content - ${fileBuffer.byteLength} bytes]`;
-      }
+      // PPTX extraction not available in Workers
+      return `[PPTX document: ${fileBuffer.byteLength} bytes. Content extraction not available in this environment. Analysis based on filename and document metadata only.]`;
 
     default:
       throw new Error(`Unsupported file type: ${ext}`);
