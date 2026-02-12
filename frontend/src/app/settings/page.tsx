@@ -1,13 +1,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Settings, Check, AlertCircle } from 'lucide-react';
+import { Settings, Check, AlertCircle, GitBranch, Server, Monitor } from 'lucide-react';
+import { FRONTEND_VERSION, BUILD_DATE } from '@/lib/version';
+import { sessionApi } from '@/lib/api';
+
+interface ApiVersionInfo {
+  version: string;
+  build_date: string;
+  environment: string;
+}
 
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState('');
   const [showSavedMessage, setShowSavedMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [storedValue, setStoredValue] = useState<string | null>(null);
+  const [apiVersion, setApiVersion] = useState<ApiVersionInfo | null>(null);
+  const [versionError, setVersionError] = useState<string | null>(null);
 
   useEffect(() => {
     // Load saved API URL
@@ -15,7 +25,25 @@ export default function SettingsPage() {
     const defaultUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     setApiUrl(saved || defaultUrl);
     setStoredValue(saved);
+
+    // Fetch API version
+    fetchApiVersion(saved || defaultUrl);
   }, []);
+
+  const fetchApiVersion = async (url: string) => {
+    try {
+      setVersionError(null);
+      const response = await fetch(`${url}/version`);
+      if (response.ok) {
+        const data = await response.json();
+        setApiVersion(data);
+      } else {
+        setVersionError('Unable to fetch API version');
+      }
+    } catch {
+      setVersionError('Unable to connect to API');
+    }
+  };
 
   const handleSave = () => {
     try {
@@ -25,6 +53,10 @@ export default function SettingsPage() {
       setStoredValue(apiUrl);
       setShowSavedMessage(true);
       setError(null);
+      
+      // Refresh API version with new URL
+      fetchApiVersion(apiUrl);
+      
       setTimeout(() => setShowSavedMessage(false), 3000);
     } catch {
       setError('Please enter a valid URL');
@@ -37,7 +69,16 @@ export default function SettingsPage() {
     setApiUrl(defaultUrl);
     setStoredValue(null);
     setShowSavedMessage(true);
+    fetchApiVersion(defaultUrl);
     setTimeout(() => setShowSavedMessage(false), 3000);
+  };
+
+  const formatBuildDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleString();
+    } catch {
+      return dateString;
+    }
   };
 
   return (
@@ -45,6 +86,65 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900">Settings</h2>
         <p className="text-gray-600 mt-2">Configure application settings</p>
+      </div>
+
+      {/* Version Information */}
+      <div className="bg-white border rounded-lg p-6 mb-6">
+        <div className="flex items-center gap-3 mb-6">
+          <GitBranch className="h-6 w-6 text-blue-600" />
+          <h3 className="text-lg font-semibold text-gray-900">Version Information</h3>
+        </div>
+
+        <div className="space-y-4">
+          {/* Frontend Version */}
+          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
+            <Monitor className="h-5 w-5 text-blue-600 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-medium text-gray-900">Frontend</h4>
+              <div className="text-sm text-gray-600 mt-1 space-y-1">
+                <div className="flex justify-between">
+                  <span>Version:</span>
+                  <span className="font-mono font-medium">{FRONTEND_VERSION}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Build Date:</span>
+                  <span className="font-mono">{formatBuildDate(BUILD_DATE)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* API Version */}
+          <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
+            <Server className="h-5 w-5 text-green-600 mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-medium text-gray-900">API</h4>
+              {apiVersion ? (
+                <div className="text-sm text-gray-600 mt-1 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Version:</span>
+                    <span className="font-mono font-medium">{apiVersion.version}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Build Date:</span>
+                    <span className="font-mono">{formatBuildDate(apiVersion.build_date)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Environment:</span>
+                    <span className="font-mono">{apiVersion.environment}</span>
+                  </div>
+                </div>
+              ) : versionError ? (
+                <div className="text-sm text-red-600 mt-1 flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4" />
+                  {versionError}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500 mt-1">Loading...</div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white border rounded-lg p-6">
