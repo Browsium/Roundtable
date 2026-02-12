@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { SessionAnalyzer } from './durable-objects/session-analyzer';
 import { personaRoutes } from './routes/personas';
 import { sessionRoutes } from './routes/sessions';
@@ -15,6 +16,14 @@ export interface Env {
 }
 
 const app = new Hono<{ Bindings: Env }>();
+
+// CORS middleware
+app.use('*', cors({
+  origin: ['https://roundtable.browsium.com', 'http://localhost:3000'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'CF-Access-Authenticated-User-Email'],
+  credentials: true,
+}));
 
 // Health check
 app.get('/', (c) => c.json({ status: 'ok', service: 'roundtable-api' }));

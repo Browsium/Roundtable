@@ -25,11 +25,21 @@ export class SessionAnalyzer {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    
+
     if (request.headers.get('Upgrade') === 'websocket') {
       return this.handleWebSocket(request);
     }
-    
+
+    // Handle direct analysis trigger
+    if (request.method === 'POST' && url.pathname === '/start') {
+      const body = await request.json() as { session_id: string };
+      // Start analysis asynchronously
+      this.startAnalysis(body.session_id);
+      return new Response(JSON.stringify({ message: 'Analysis started' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 
@@ -65,40 +75,54 @@ export class SessionAnalyzer {
     });
   }
 
-  private async startAnalysis(sessionId: string, ws: WebSocket): Promise<void> {
+  private async startAnalysis(sessionId: string, ws?: WebSocket): Promise<void> {
     const db = new D1Client(this.env.DB);
-    
+
+    const sendMessage = (msg: any) => {
+      if (ws && ws.readyState === 1) { // WebSocket.OPEN
+        ws.send(JSON.stringify(msg));
+      }
+      // Also broadcast to all connected websockets
+      this.websockets.forEach(socket => {
+        if (socket.readyState === 1) {
+          socket.send(JSON.stringify(msg));
+        }
+      });
+    };
+
     try {
       // Get session
       const session = await db.getSession(sessionId);
       if (!session) {
-        ws.send(JSON.stringify({
+        sendMessage({
           type: 'error',
           error: 'Session not found',
-        }));
+        });
         return;
       }
-      
+
       // Update session status
       await db.updateSession(sessionId, { status: 'analyzing' });
-      
+      sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
+
       // Get document from R2
       const r2Object = await this.env.R2.get(session.file_r2_key);
       if (!r2Object) {
-        ws.send(JSON.stringify({
+        sendMessage({
           type: 'error',
           error: 'Document not found in storage',
-        }));
+        });
+        await db.updateSession(sessionId, { status: 'failed' });
         return;
       }
-      
+
       // Extract text
       const fileBuffer = await r2Object.arrayBuffer();
       const documentText = await extractTextFromDocument(
         fileBuffer,
         session.file_extension
       );
-      
+
       // Get personas
       const selectedPersonaIds = JSON.parse(session.selected_persona_ids);
       const personas = [];
@@ -108,35 +132,36 @@ export class SessionAnalyzer {
           personas.push(persona);
         }
       }
-      
+
       if (personas.length === 0) {
-        ws.send(JSON.stringify({
+        sendMessage({
           type: 'error',
           error: 'No valid personas found',
-        }));
+        });
+        await db.updateSession(sessionId, { status: 'failed' });
         return;
       }
-      
+
       // Start analyses concurrently
-      const analysisPromises = personas.map(persona => 
-        this.analyzePersona(sessionId, persona, documentText, ws, db)
+      const analysisPromises = personas.map(persona =>
+        this.analyzePersona(sessionId, persona, documentText, sendMessage, db)
       );
-      
+
       await Promise.all(analysisPromises);
-      
+
       // All complete
-      ws.send(JSON.stringify({
+      sendMessage({
         type: 'all_complete',
         session_id: sessionId,
-      }));
-      
+      });
+
       await db.updateSession(sessionId, { status: 'completed' });
-      
+
     } catch (error) {
-      ws.send(JSON.stringify({
+      sendMessage({
         type: 'error',
         error: String(error),
-      }));
+      });
       await db.updateSession(sessionId, { status: 'failed' });
     }
   }
@@ -145,11 +170,11 @@ export class SessionAnalyzer {
     sessionId: string,
     persona: any,
     documentText: string,
-    ws: WebSocket,
+    sendMessage: (msg: any) => void,
     db: D1Client
   ): Promise<void> {
     const clibridge = new CLIBridgeClient(this.env);
-    
+
     try {
       // Update analysis status
       const analyses = await db.getAnalyses(sessionId);
@@ -160,7 +185,13 @@ export class SessionAnalyzer {
           started_at: new Date().toISOString(),
         });
       }
-      
+
+      sendMessage({
+        type: 'status',
+        persona_id: persona.id,
+        status: 'running',
+      });
+
       // Call CLIBridge streaming endpoint
       const response = await clibridge.streamAnalysis({
         provider: 'claude',
@@ -170,28 +201,28 @@ export class SessionAnalyzer {
           { role: 'user', content: documentText },
         ],
       });
-      
-      // Stream chunks to WebSocket
+
+      // Stream chunks
       let fullResponse = '';
       const reader = response.body?.getReader();
-      
+
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          
+
           const chunk = new TextDecoder().decode(value);
           fullResponse += chunk;
-          
+
           // Send chunk to frontend
-          ws.send(JSON.stringify({
+          sendMessage({
             type: 'chunk',
             persona_id: persona.id,
             text: chunk,
-          }));
+          });
         }
       }
-      
+
       // Parse final result
       let result;
       try {
@@ -214,35 +245,35 @@ export class SessionAnalyzer {
           rewritten_headline_suggestion: '',
         };
       }
-      
+
       // Send complete message
-      ws.send(JSON.stringify({
+      sendMessage({
         type: 'complete',
         persona_id: persona.id,
         result,
-      }));
-      
+      });
+
       // Save to D1
       if (analysis) {
         await db.updateAnalysis(analysis.id, {
           status: 'completed',
-          score_json: JSON.stringify(result.dimension_scores),
-          top_issues_json: JSON.stringify(result.top_3_issues),
+          score_json: JSON.stringify(result.dimension_scores || {}),
+          top_issues_json: JSON.stringify(result.top_3_issues || []),
           rewritten_suggestions_json: JSON.stringify({
-            what_works_well: result.what_works_well,
-            overall_verdict: result.overall_verdict,
-            rewritten_headline: result.rewritten_headline_suggestion,
+            what_works_well: result.what_works_well || [],
+            overall_verdict: result.overall_verdict || '',
+            rewritten_headline: result.rewritten_headline_suggestion || '',
           }),
           completed_at: new Date().toISOString(),
         });
       }
-      
+
     } catch (error) {
-      ws.send(JSON.stringify({
+      sendMessage({
         type: 'error',
         persona_id: persona.id,
         error: String(error),
-      }));
+      });
       
       const analyses = await db.getAnalyses(sessionId);
       const analysis = analyses.find(a => a.persona_id === persona.id);

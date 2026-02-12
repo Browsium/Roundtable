@@ -97,8 +97,8 @@ const handleStartAnalysis = async () => {
       // Upload file to R2
       await r2Api.uploadFile(session.id, file);
 
-      // Redirect to results page where WebSocket will handle analysis
-      router.push(`/sessions/${session.id}`);
+// Redirect to results page where WebSocket will handle analysis
+    router.push(`/sessions/detail?id=${session.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to start analysis');
       setLoading(false);

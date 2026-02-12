@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
 import {
@@ -13,33 +13,40 @@ import {
   ChevronDown,
   ChevronUp,
   Share2,
-  Download
+  Download,
+  User
 } from 'lucide-react';
-import { sessionApi } from '@/lib/api';
-import type { Session, Analysis } from '@/lib/types';
+import { sessionApi, personaApi, AnalysisWebSocket } from '@/lib/api';
+import type { Session, Analysis, Persona } from '@/lib/types';
 
 function SessionDetailContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('id') || '';
 
   const [session, setSession] = useState<Session | null>(null);
+  const [personas, setPersonas] = useState<Record<string, Persona>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedAnalysis, setExpandedAnalysis] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
-  useEffect(() => {
-    loadSession();
-    // Poll for updates if still analyzing
-    const interval = setInterval(() => {
-      if (session?.status === 'analyzing') {
-        loadSession();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [sessionId, session?.status]);
+  // Load personas to get names
+  const loadPersonas = useCallback(async () => {
+    try {
+      const data = await personaApi.getAll();
+      const personaMap: Record<string, Persona> = {};
+      data.forEach(p => {
+        personaMap[p.id] = p;
+      });
+      setPersonas(personaMap);
+    } catch (err) {
+      console.error('Failed to load personas:', err);
+    }
+  }, []);
 
-  const loadSession = async () => {
+  // Load session data
+  const loadSession = useCallback(async () => {
     try {
       const data = await sessionApi.get(sessionId);
       setSession(data);
@@ -48,11 +55,69 @@ function SessionDetailContent() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionId]);
+
+  // Start WebSocket connection for analysis
+  const startAnalysis = useCallback(() => {
+    if (!sessionId || wsConnected) return;
+
+    setWsConnected(true);
+    const ws = new AnalysisWebSocket(
+      sessionId,
+      (data) => {
+        console.log('WebSocket message:', data);
+        // Refresh session data on any message
+        loadSession();
+      },
+      (err) => {
+        console.error('WebSocket error:', err);
+      }
+    );
+
+    ws.connect();
+
+    return () => {
+      ws.close();
+    };
+  }, [sessionId, wsConnected, loadSession]);
+
+  useEffect(() => {
+    loadPersonas();
+    loadSession();
+  }, [loadPersonas, loadSession]);
+
+  // Trigger analysis when session is uploaded
+  useEffect(() => {
+    if (session && session.status === 'uploaded' && !wsConnected) {
+      // First try to trigger analysis via API
+      sessionApi.startAnalysis(sessionId).then(() => {
+        console.log('Analysis triggered via API');
+        // Then connect WebSocket for real-time updates
+        const cleanup = startAnalysis();
+        return cleanup;
+      }).catch((err) => {
+        console.error('Failed to trigger analysis:', err);
+        // Still try WebSocket even if API fails
+        const cleanup = startAnalysis();
+        return cleanup;
+      });
+    }
+  }, [session, wsConnected, startAnalysis, sessionId]);
+
+  useEffect(() => {
+    // Poll for updates if analyzing
+    if (session?.status === 'analyzing') {
+      const interval = setInterval(() => {
+        loadSession();
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [session?.status, loadSession]);
 
   const handleRetry = async (_personaId: string, _analysisId: number) => {
     // Retry not implemented yet - would reconnect WebSocket and restart analysis
     setError('Retry functionality coming soon');
+    setTimeout(() => setError(null), 3000);
   };
 
   const getStatusIcon = (status: string) => {
@@ -71,8 +136,8 @@ function SessionDetailContent() {
   const calculateOverallScore = (analysis: Analysis) => {
     if (!analysis.score_json) return 0;
     try {
-      const scoreData = typeof analysis.score_json === 'string' 
-        ? JSON.parse(analysis.score_json) 
+      const scoreData = typeof analysis.score_json === 'string'
+        ? JSON.parse(analysis.score_json)
         : analysis.score_json;
       const scores = [
         scoreData.relevance?.score || 0,
@@ -86,6 +151,16 @@ function SessionDetailContent() {
     } catch {
       return 0;
     }
+  };
+
+  const getPersonaName = (personaId: string) => {
+    const persona = personas[personaId];
+    return persona?.name || 'Unknown Persona';
+  };
+
+  const getPersonaRole = (personaId: string) => {
+    const persona = personas[personaId];
+    return persona?.role || '';
   };
 
   if (loading) {
@@ -147,24 +222,32 @@ function SessionDetailContent() {
                 {session.status === 'completed' && 'All analyses complete'}
                 {session.status === 'failed' && 'All analyses failed'}
                 {session.status === 'analyzing' && 'Analysis in progress...'}
-                {session.status === 'uploaded' && 'Document uploaded'}
+                {session.status === 'uploaded' && 'Starting analysis...'}
               </p>
-<p className="text-sm text-gray-600">
-            {session.analyses?.filter(a => a.status === 'completed').length || 0} of {(() => {
-              try {
-                const ids = typeof session.selected_persona_ids === 'string' 
-                  ? JSON.parse(session.selected_persona_ids) 
-                  : session.selected_persona_ids;
-                return ids.length;
-              } catch {
-                return 0;
-              }
-            })()} complete
-          </p>
+              <p className="text-sm text-gray-600">
+                {session.analyses?.filter(a => a.status === 'completed').length || 0} of {(() => {
+                  try {
+                    const ids = typeof session.selected_persona_ids === 'string'
+                      ? JSON.parse(session.selected_persona_ids)
+                      : session.selected_persona_ids;
+                    return ids.length;
+                  } catch {
+                    return 0;
+                  }
+                })()} complete
+              </p>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5" />
+          {error}
+        </div>
+      )}
 
       {/* Analyses */}
       <div className="space-y-4">
@@ -179,12 +262,15 @@ function SessionDetailContent() {
               onClick={() => setExpandedAnalysis(expandedAnalysis === analysis.id ? null : analysis.id)}
             >
               <div className="flex items-start gap-4">
-                {getStatusIcon(analysis.status)}
+                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                  <User className="h-5 w-5 text-blue-600" />
+                </div>
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
-                    {analysis.persona_name || 'Unknown Persona'}
+                    {getPersonaName(analysis.persona_id)}
                   </h3>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600">{getPersonaRole(analysis.persona_id)}</p>
+                  <p className="text-sm text-gray-500 mt-1">
                     {analysis.status === 'completed' && `Overall Score: ${calculateOverallScore(analysis)}/10`}
                     {analysis.status === 'failed' && 'Analysis failed'}
                     {analysis.status === 'running' && 'Analyzing...'}
@@ -193,6 +279,7 @@ function SessionDetailContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {getStatusIcon(analysis.status)}
                 {analysis.status === 'failed' && (
                   <button
                     onClick={(e) => {
@@ -200,7 +287,7 @@ function SessionDetailContent() {
                       handleRetry(analysis.persona_id, analysis.id);
                     }}
                     disabled={retryingId === analysis.id}
-                    className="mr-2 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200"
+                    className="ml-2 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200"
                   >
                     {retryingId === analysis.id ? (
                       <RefreshCw className="h-4 w-4 animate-spin mr-1" />
@@ -221,95 +308,95 @@ function SessionDetailContent() {
             {/* Analysis Details */}
             {expandedAnalysis === analysis.id && analysis.status === 'completed' && (
               <div className="border-t px-6 py-6 bg-gray-50">
-{analysis.score_json && (() => {
-              try {
-                const scores = typeof analysis.score_json === 'string' 
-                  ? JSON.parse(analysis.score_json) 
-                  : analysis.score_json;
-                return (
-                  <div className="mb-6">
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {Object.entries(scores).map(([key, value]: [string, any]) => (
-                        <div key={key} className="bg-white p-3 rounded border">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs text-gray-600 capitalize">
-                              {key.replace('_', ' ')}
-                            </span>
-                            <span className="text-lg font-bold text-blue-600">
-                              {value?.score || 0}/10
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
+                {analysis.score_json && (() => {
+                  try {
+                    const scores = typeof analysis.score_json === 'string'
+                      ? JSON.parse(analysis.score_json)
+                      : analysis.score_json;
+                    return (
+                      <div className="mb-6">
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                          {Object.entries(scores).map(([key, value]: [string, any]) => (
+                            <div key={key} className="bg-white p-3 rounded border">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs text-gray-600 capitalize">
+                                  {key.replace('_', ' ')}
+                                </span>
+                                <span className="text-lg font-bold text-blue-600">
+                                  {value?.score || 0}/10
+                                </span>
+                              </div>
+                              <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              } catch { return null; }
-            })()}
-
-{analysis.top_issues_json && (() => {
-              try {
-                const issues = typeof analysis.top_issues_json === 'string' 
-                  ? JSON.parse(analysis.top_issues_json) 
-                  : analysis.top_issues_json;
-                if (!Array.isArray(issues) || issues.length === 0) return null;
-                return (
-                  <div className="mb-6">
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
-                    <div className="space-y-3">
-                      {issues.map((issue: any, idx: number) => (
-                        <div key={idx} className="bg-white p-4 rounded border">
-                          <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
-                          <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
-                          </div>
-                          <div className="text-sm text-green-700">
-                            <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              } catch { return null; }
-            })()}
-
-{analysis.rewritten_suggestions_json && (() => {
-              try {
-                const suggestions = typeof analysis.rewritten_suggestions_json === 'string' 
-                  ? JSON.parse(analysis.rewritten_suggestions_json) 
-                  : analysis.rewritten_suggestions_json;
-                return (
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Additional Feedback</h4>
-                    <div className="bg-white p-4 rounded border">
-                      {suggestions?.what_works_well?.length > 0 && (
-                        <div className="mb-3">
-                          <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
-                          <ul className="list-disc list-inside text-sm text-gray-600">
-                            {suggestions.what_works_well.map((item: string, idx: number) => (
-                              <li key={idx}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <div className="mb-3">
-                        <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
-                        <p className="text-sm text-gray-600">{suggestions?.overall_verdict || ''}</p>
                       </div>
-                      {suggestions?.rewritten_headline && (
-                        <div>
-                          <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
-                          <p className="text-sm text-gray-600 italic">&ldquo;{suggestions.rewritten_headline}&rdquo;</p>
+                    );
+                  } catch { return null; }
+                })()}
+
+                {analysis.top_issues_json && (() => {
+                  try {
+                    const issues = typeof analysis.top_issues_json === 'string'
+                      ? JSON.parse(analysis.top_issues_json)
+                      : analysis.top_issues_json;
+                    if (!Array.isArray(issues) || issues.length === 0) return null;
+                    return (
+                      <div className="mb-6">
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
+                        <div className="space-y-3">
+                          {issues.map((issue: any, idx: number) => (
+                            <div key={idx} className="bg-white p-4 rounded border">
+                              <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
+                              </div>
+                              <div className="text-sm text-green-700">
+                                <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              } catch { return null; }
-            })()}
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
+
+                {analysis.rewritten_suggestions_json && (() => {
+                  try {
+                    const suggestions = typeof analysis.rewritten_suggestions_json === 'string'
+                      ? JSON.parse(analysis.rewritten_suggestions_json)
+                      : analysis.rewritten_suggestions_json;
+                    return (
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-900 mb-3">Additional Feedback</h4>
+                        <div className="bg-white p-4 rounded border">
+                          {suggestions?.what_works_well?.length > 0 && (
+                            <div className="mb-3">
+                              <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
+                              <ul className="list-disc list-inside text-sm text-gray-600">
+                                {suggestions.what_works_well.map((item: string, idx: number) => (
+                                  <li key={idx}>{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          <div className="mb-3">
+                            <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
+                            <p className="text-sm text-gray-600">{suggestions?.overall_verdict || ''}</p>
+                          </div>
+                          {suggestions?.rewritten_headline && (
+                            <div>
+                              <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
+                              <p className="text-sm text-gray-600 italic">&ldquo;{suggestions.rewritten_headline}&rdquo;</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
 
                 {analysis.error_message && (
                   <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">

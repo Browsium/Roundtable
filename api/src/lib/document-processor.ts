@@ -1,33 +1,50 @@
-// Document processing will be implemented using JavaScript libraries
-// Since we're in Workers environment, we'll use pure JS approaches
+// Document processing using JavaScript libraries
+import mammoth from 'mammoth';
 
 export async function extractTextFromDocument(
   fileBuffer: ArrayBuffer,
   extension: string
 ): Promise<string> {
   const ext = extension.toLowerCase();
-  
+  const buffer = Buffer.from(fileBuffer);
+
   switch (ext) {
     case '.txt':
     case '.md':
     case '.json':
       return new TextDecoder().decode(fileBuffer);
-    
+
     case '.pdf':
-      // PDF extraction would require pdf-parse library
-      // For now, return placeholder
-      return `[PDF content - ${fileBuffer.byteLength} bytes]`;
-    
+      // PDF extraction - try to extract text, fallback to placeholder
+      try {
+        // Note: pdf-parse doesn't work well in Workers
+        // For now, return placeholder with file size info
+        return `[PDF content - ${fileBuffer.byteLength} bytes. PDF parsing not fully implemented in Workers environment.]`;
+      } catch {
+        return `[PDF content - ${fileBuffer.byteLength} bytes]`;
+      }
+
     case '.docx':
-      // DOCX extraction would require mammoth library
-      // For now, return placeholder
-      return `[DOCX content - ${fileBuffer.byteLength} bytes]`;
-    
+      // DOCX extraction using mammoth
+      try {
+        const result = await mammoth.extractRawText({ buffer });
+        if (result.value && result.value.trim().length > 0) {
+          return result.value;
+        }
+        return `[DOCX file parsed but no text content found - ${fileBuffer.byteLength} bytes]`;
+      } catch (error) {
+        console.error('DOCX parsing error:', error);
+        return `[DOCX content - ${fileBuffer.byteLength} bytes. Parsing error: ${error}]`;
+      }
+
     case '.pptx':
-      // PPTX extraction would require pptx-parser library
-      // For now, return placeholder
-      return `[PPTX content - ${fileBuffer.byteLength} bytes]`;
-    
+      // PPTX extraction - not fully implemented
+      try {
+        return `[PPTX content - ${fileBuffer.byteLength} bytes. PPTX parsing not fully implemented in Workers environment.]`;
+      } catch {
+        return `[PPTX content - ${fileBuffer.byteLength} bytes]`;
+      }
+
     default:
       throw new Error(`Unsupported file type: ${ext}`);
   }

@@ -95,18 +95,42 @@ sessionRoutes.put('/:id', async (c) => {
 sessionRoutes.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const db = new D1Client(c.env.DB);
-  
+
   const session = await db.getSession(id);
   if (!session) {
     return c.json({ error: 'Session not found' }, 404);
   }
-  
+
   // Delete from R2
   const r2 = new R2Client(c.env.R2, '2b2861c0bba0855e5f6ed79a9451e6b2');
   await r2.deleteDocument(session.file_r2_key);
-  
+
   // Delete from D1
   await db.deleteSession(id);
-  
+
   return c.json({ message: 'Session deleted' });
+});
+
+// Trigger analysis manually (fallback for when WebSocket doesn't work)
+sessionRoutes.post('/:id/analyze', async (c) => {
+  const id = c.req.param('id');
+  const db = new D1Client(c.env.DB);
+
+  const session = await db.getSession(id);
+  if (!session) {
+    return c.json({ error: 'Session not found' }, 404);
+  }
+
+  // Trigger the durable object to start analysis
+  const analyzerId = c.env.SESSION_ANALYZER.idFromName(id);
+  const analyzer = c.env.SESSION_ANALYZER.get(analyzerId);
+
+  // Send a message to start analysis
+  await analyzer.fetch(new Request('http://internal/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: id }),
+  }));
+
+  return c.json({ message: 'Analysis started', session_id: id });
 });

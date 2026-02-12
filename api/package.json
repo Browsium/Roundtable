@@ -20,6 +20,9 @@
     "wrangler": "^4.54.0"
   },
   "dependencies": {
-    "hono": "^4.6.14"
+    "hono": "^4.6.14",
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^2.4.5",
+    "pptx-parser": "^1.1.7-beta.9"
   }
 }
