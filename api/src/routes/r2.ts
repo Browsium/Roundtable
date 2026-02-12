@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index';
 import { R2Client } from '../lib/r2';
+import { D1Client } from '../lib/d1';
 
 export const r2Routes = new Hono<{ Bindings: Env }>();
 
@@ -25,16 +26,32 @@ r2Routes.get('/upload-url', async (c) => {
 r2Routes.put('/upload/:sessionId/:filename{.+}', async (c) => {
   const sessionId = c.req.param('sessionId');
   const filename = decodeURIComponent(c.req.param('filename'));
-  
+
   const r2 = new R2Client(c.env.R2, '2b2861c0bba0855e5f6ed79a9451e6b2');
   const contentType = c.req.header('Content-Type') || 'application/octet-stream';
-  
+
   try {
-    const data = await c.req.arrayBuffer();
-    const key = `sessions/${sessionId}/${Date.now()}-${filename}`;
+    // Get the session to find the correct R2 key
+    const db = new D1Client(c.env.DB);
+    const session = await db.getSession(sessionId);
     
+    if (!session) {
+      return c.json({ error: 'Session not found' }, 404);
+    }
+
+    const data = await c.req.arrayBuffer();
+    
+    // Use the file_r2_key that was stored when the session was created
+    const key = session.file_r2_key;
+
     await r2.uploadDocument(key, data, contentType);
     
+    // Update session file size
+    await db.updateSession(sessionId, { 
+      file_size_bytes: data.byteLength,
+      status: 'uploaded'
+    });
+
     return c.json({
       success: true,
       key,
