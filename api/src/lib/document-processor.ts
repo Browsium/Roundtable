@@ -6,7 +6,10 @@ export async function extractTextFromDocument(
   fileBuffer: ArrayBuffer,
   extension: string
 ): Promise<string> {
-  const ext = extension.toLowerCase();
+  // Normalize extension - add dot if missing
+  const ext = extension.toLowerCase().startsWith('.') 
+    ? extension.toLowerCase() 
+    : `.${extension.toLowerCase()}`;
 
   switch (ext) {
     case '.txt':
