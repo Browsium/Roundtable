@@ -283,15 +283,30 @@ export class SessionAnalyzer {
 
             chunkCount++;
             const chunk = new TextDecoder().decode(value);
-            console.log(`Received chunk ${chunkCount} for persona ${persona.id}, length: ${chunk.length}`);
-            fullResponse += chunk;
-
-            // Send chunk to frontend
-            sendMessage({
-              type: 'chunk',
-              persona_id: persona.id,
-              text: chunk,
-            });
+            console.log(`Received raw chunk ${chunkCount} for persona ${persona.id}:`, chunk.substring(0, 200));
+            
+            // Parse SSE format
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const jsonData = JSON.parse(line.substring(6));
+                  if (jsonData.type === 'chunk' && jsonData.text) {
+                    fullResponse += jsonData.text;
+                    // Send chunk to frontend
+                    sendMessage({
+                      type: 'chunk',
+                      persona_id: persona.id,
+                      text: jsonData.text,
+                    });
+                  } else if (jsonData.type === 'done' && jsonData.response) {
+                    fullResponse += jsonData.response;
+                  }
+                } catch (parseError) {
+                  console.warn(`Failed to parse SSE data line for persona ${persona.id}:`, line);
+                }
+              }
+            }
           }
         } catch (streamError) {
           console.error(`Streaming failed for persona ${persona.id}:`, streamError);
