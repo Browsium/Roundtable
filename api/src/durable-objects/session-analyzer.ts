@@ -241,10 +241,7 @@ export class SessionAnalyzer {
       console.log(`Initializing CLIBridge client for persona ${persona.id}`);
       const clibridge = new CLIBridgeClient(this.env);
 
-    try {
       // Update analysis status
-      const analyses = await db.getAnalyses(sessionId);
-      const analysis = analyses.find(a => a.persona_id === persona.id);
       if (analysis) {
         await db.updateAnalysis(analysis.id, {
           status: 'running',
