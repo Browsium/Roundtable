@@ -246,6 +246,7 @@ export class SessionAnalyzer {
           { role: 'user', content: documentText },
         ],
       });
+      console.log(`CLIBridge response for persona ${persona.id}:`, { status: response.status, statusText: response.statusText, contentType: response.headers.get('content-type') });
       console.log(`CLIBridge response for persona ${persona.id}:`, { status: response.status, statusText: response.statusText });
 
       // Check if response is OK before streaming
@@ -268,14 +269,18 @@ export class SessionAnalyzer {
       if (reader) {
         try {
           let chunkCount = 0;
+          let buffer = '';
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
+              if (buffer.length > 0) {
+                console.log(`Remaining buffer for ${persona.id}: ${buffer.substring(0, 200)}`);
+              }
               if (fullResponse.length > 0) {
-                console.log(`First 500 chars of response: ${fullResponse.substring(0, 500)}`);
+                console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
               } else {
-                console.log(`No response content received for persona ${persona.id}`);
+                console.log(`No response content for persona ${persona.id}`);
               }
               streamingSuccess = true;
               break;
@@ -283,16 +288,25 @@ export class SessionAnalyzer {
 
             chunkCount++;
             const chunk = new TextDecoder().decode(value);
-            console.log(`Received raw chunk ${chunkCount} for persona ${persona.id}:`, chunk.substring(0, 200));
+            console.log(`Received raw chunk ${chunkCount} for persona ${persona.id} (length: ${chunk.length}):`, chunk.substring(0, 200));
             
-            // Parse SSE format
-            const lines = chunk.split('\n');
+            // Buffer the chunk data for proper line parsing
+            buffer += chunk;
+            const lines = buffer.split('\n');
+            
+            // Keep the last incomplete line in buffer
+            buffer = lines.pop() || '';
+            
+            // Process complete lines
             for (const line of lines) {
+              console.log(`Processing line for ${persona.id}:`, line.substring(0, 100));
               if (line.startsWith('data: ')) {
                 try {
                   const jsonData = JSON.parse(line.substring(6));
+                  console.log(`Parsed SSE data for ${persona.id}:`, jsonData.type);
                   if (jsonData.type === 'chunk' && jsonData.text) {
                     fullResponse += jsonData.text;
+                    console.log(`Added chunk text for ${persona.id}, new length: ${fullResponse.length}`);
                     // Send chunk to frontend
                     sendMessage({
                       type: 'chunk',
@@ -301,10 +315,13 @@ export class SessionAnalyzer {
                     });
                   } else if (jsonData.type === 'done' && jsonData.response) {
                     fullResponse += jsonData.response;
+                    console.log(`Added done response for ${persona.id}, new length: ${fullResponse.length}`);
                   }
                 } catch (parseError) {
-                  console.warn(`Failed to parse SSE data line for persona ${persona.id}:`, line);
+                  console.warn(`Failed to parse SSE data line for persona ${persona.id}:`, line.substring(0, 100));
                 }
+              } else if (line.startsWith('event: ')) {
+                console.log(`Event type for ${persona.id}:`, line.substring(7));
               }
             }
           }
@@ -321,12 +338,7 @@ export class SessionAnalyzer {
       } else {
         console.warn(`No readable stream for persona ${persona.id}`);
       }
-      console.log(`Full response length for persona ${persona.id}: ${fullResponse.length}`);
-      if (fullResponse.length > 0) {
-        console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
-      } else {
-        console.log(`No response content for persona ${persona.id}`);
-      }
+      console.log(`Final full response length for persona ${persona.id}: ${fullResponse.length}`);
 
       // Only proceed with parsing if streaming was successful
       if (!streamingSuccess && fullResponse.length === 0) {

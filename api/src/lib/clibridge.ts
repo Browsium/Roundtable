@@ -84,6 +84,7 @@ export class CLIBridgeClient {
         if (response.ok) {
           console.log(`CLIBridge streamAnalysis successful attempt ${attempt}`);
           console.log(`CLIBridge response headers:`, [...response.headers.entries()]);
+          console.log(`CLIBridge response content-type:`, response.headers.get('content-type'));
           return response;
         }
 
