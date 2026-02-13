@@ -229,25 +229,43 @@ export class SessionAnalyzer {
         ],
       });
 
+      // Check if response is OK before streaming
+      if (!response.ok) {
+        throw new Error(`CLIBridge returned ${response.status}: ${response.statusText}`);
+      }
+
       // Stream chunks
       let fullResponse = '';
       const reader = response.body?.getReader();
 
       if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          const chunk = new TextDecoder().decode(value);
-          fullResponse += chunk;
+            const chunk = new TextDecoder().decode(value);
+            fullResponse += chunk;
 
-          // Send chunk to frontend
-          sendMessage({
-            type: 'chunk',
-            persona_id: persona.id,
-            text: chunk,
-          });
+            // Send chunk to frontend
+            sendMessage({
+              type: 'chunk',
+              persona_id: persona.id,
+              text: chunk,
+            });
+          }
+        } catch (streamError) {
+          console.error(`Streaming failed for persona ${persona.id}:`, streamError);
+          throw new Error(`Streaming failed: ${streamError}`);
+        } finally {
+          try {
+            await reader.cancel();
+          } catch (cancelError) {
+            console.error(`Failed to cancel reader for persona ${persona.id}:`, cancelError);
+          }
         }
+      } else {
+        console.warn(`No readable stream for persona ${persona.id}`);
       }
 
       // Parse final result
@@ -260,39 +278,44 @@ export class SessionAnalyzer {
         } else {
           result = JSON.parse(fullResponse);
         }
-      } catch {
+      } catch (parseError) {
         // If parsing fails, treat the whole response as the verdict
+        console.error(`Failed to parse JSON for persona ${persona.id}:`, parseError);
+        console.log(`Full response was: ${fullResponse.substring(0, 500)}...`);
         result = {
           persona_role: persona.role,
           overall_score: 0,
           dimension_scores: {},
           top_3_issues: [],
           what_works_well: [],
-          overall_verdict: fullResponse,
+          overall_verdict: fullResponse || 'No response received',
           rewritten_headline_suggestion: '',
         };
       }
 
-      // Send complete message
-      sendMessage({
-        type: 'complete',
-        persona_id: persona.id,
-        result,
-      });
-
-      // Save to D1
-      if (analysis) {
-        await db.updateAnalysis(analysis.id, {
-          status: 'completed',
-          score_json: JSON.stringify(result.dimension_scores || {}),
-          top_issues_json: JSON.stringify(result.top_3_issues || []),
-          rewritten_suggestions_json: JSON.stringify({
-            what_works_well: result.what_works_well || [],
-            overall_verdict: result.overall_verdict || '',
-            rewritten_headline: result.rewritten_headline_suggestion || '',
-          }),
-          completed_at: new Date().toISOString(),
+      // Only send complete message if we have a valid result
+      if (result) {
+        // Send complete message
+        sendMessage({
+          type: 'complete',
+          persona_id: persona.id,
+          result,
         });
+
+        // Save to D1
+        if (analysis) {
+          await db.updateAnalysis(analysis.id, {
+            status: 'completed',
+            score_json: JSON.stringify(result.dimension_scores || {}),
+            top_issues_json: JSON.stringify(result.top_3_issues || []),
+            rewritten_suggestions_json: JSON.stringify({
+              what_works_well: result.what_works_well || [],
+              overall_verdict: result.overall_verdict || '',
+              rewritten_headline: result.rewritten_headline_suggestion || '',
+            }),
+            completed_at: new Date().toISOString(),
+          });
+        }
       }
 
     } catch (error) {
