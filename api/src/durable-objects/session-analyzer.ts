@@ -272,13 +272,18 @@ export class SessionAnalyzer {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
-              console.log(`First 500 chars of response: ${fullResponse.substring(0, 500)}`);
+              if (fullResponse.length > 0) {
+                console.log(`First 500 chars of response: ${fullResponse.substring(0, 500)}`);
+              } else {
+                console.log(`No response content received for persona ${persona.id}`);
+              }
               streamingSuccess = true;
               break;
             }
 
             chunkCount++;
             const chunk = new TextDecoder().decode(value);
+            console.log(`Received chunk ${chunkCount} for persona ${persona.id}, length: ${chunk.length}`);
             fullResponse += chunk;
 
             // Send chunk to frontend
@@ -304,6 +309,8 @@ export class SessionAnalyzer {
       console.log(`Full response length for persona ${persona.id}: ${fullResponse.length}`);
       if (fullResponse.length > 0) {
         console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
+      } else {
+        console.log(`No response content for persona ${persona.id}`);
       }
 
       // Only proceed with parsing if streaming was successful

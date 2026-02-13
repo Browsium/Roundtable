@@ -83,10 +83,12 @@ export class CLIBridgeClient {
 
         if (response.ok) {
           console.log(`CLIBridge streamAnalysis successful attempt ${attempt}`);
+          console.log(`CLIBridge response headers:`, [...response.headers.entries()]);
           return response;
         }
 
         const error = await response.text();
+        console.log(`CLIBridge error response body (attempt ${attempt}):`, error.substring(0, 1000));
         const errorInfo = `CLIBridge stream failed: ${response.status} ${response.statusText} - ${error.substring(0, 500)}`;
         console.error(`CLIBridge error (attempt ${attempt}):`, errorInfo);
         
