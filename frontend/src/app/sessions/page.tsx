@@ -6,6 +6,7 @@ import { FileText, Clock, CheckCircle, AlertCircle, XCircle, ArrowRight, Trash2 
 import { sessionApi } from '@/lib/api';
 import type { Session } from '@/lib/types';
 import Link from 'next/link';
+import HourglassSpinner from '@/components/HourglassSpinner';
 
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -59,7 +60,7 @@ export default function SessionsPage() {
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'analyzing':
-        return <Clock className="h-5 w-5 text-blue-500 animate-spin" />;
+        return <HourglassSpinner className="h-5 w-5 text-blue-500" />;
       default:
         return <Clock className="h-5 w-5 text-gray-400" />;
     }

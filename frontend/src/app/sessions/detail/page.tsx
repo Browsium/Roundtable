@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { sessionApi, personaApi, AnalysisWebSocket } from '@/lib/api';
 import type { Session, Analysis, Persona } from '@/lib/types';
+import HourglassSpinner from '@/components/HourglassSpinner';
 
 function SessionDetailContent() {
   const searchParams = useSearchParams();
@@ -147,7 +148,7 @@ function SessionDetailContent() {
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'running':
-        return <Clock className="h-5 w-5 text-blue-500 animate-spin" />;
+        return <HourglassSpinner className="h-5 w-5 text-blue-500" />;
       default:
         return <Clock className="h-5 w-5 text-gray-400" />;
     }
@@ -247,7 +248,7 @@ function SessionDetailContent() {
               <XCircle className="h-8 w-8 text-red-500" />
             )}
             {session.status === 'analyzing' && (
-              <Clock className="h-8 w-8 text-blue-500 animate-spin" />
+              <HourglassSpinner className="h-8 w-8 text-blue-500" />
             )}
             {session.status === 'uploaded' && (
               <AlertCircle className="h-8 w-8 text-yellow-500" />
