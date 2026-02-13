@@ -4,6 +4,7 @@ import { SessionAnalyzer } from './durable-objects/session-analyzer';
 import { personaRoutes } from './routes/personas';
 import { sessionRoutes } from './routes/sessions';
 import { r2Routes } from './routes/r2';
+import { settingsRoutes } from './routes/settings';
 import pkg from '../package.json';
 
 export interface Env {
@@ -42,6 +43,7 @@ app.get('/version', (c) => c.json({
 app.route('/personas', personaRoutes);
 app.route('/sessions', sessionRoutes);
 app.route('/r2', r2Routes);
+app.route('/settings', settingsRoutes);
 
 // WebSocket upgrade endpoint
 app.get('/sessions/:id/analyze', async (c) => {

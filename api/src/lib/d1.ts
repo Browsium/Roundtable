@@ -195,4 +195,36 @@ export class D1Client {
     
     await this.db.prepare(`UPDATE analyses SET ${setClause} WHERE id = ?`).bind(...values).run();
   }
+
+  // Settings operations
+  async getSettings(): Promise<Setting[]> {
+    const result = await this.db.prepare('SELECT * FROM settings ORDER BY key').all<Setting>();
+    return result.results || [];
+  }
+
+  async getSetting(key: string): Promise<Setting | null> {
+    const result = await this.db.prepare('SELECT * FROM settings WHERE key = ?').bind(key).first<Setting>();
+    return result || null;
+  }
+
+  async getSettingValue(key: string): Promise<string | null> {
+    const s = await this.getSetting(key);
+    return s?.value ?? null;
+  }
+
+  async upsertSetting(key: string, value: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(key, value, now).run();
+  }
+
+  async upsertSettings(settings: Record<string, string>): Promise<void> {
+    const entries = Object.entries(settings);
+    for (const [key, value] of entries) {
+      await this.upsertSetting(key, value);
+    }
+  }
 }

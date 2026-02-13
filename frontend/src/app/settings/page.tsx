@@ -3,13 +3,32 @@
 import { useState, useEffect } from 'react';
 import { Settings, Check, AlertCircle, GitBranch, Server, Monitor } from 'lucide-react';
 import { FRONTEND_VERSION, BUILD_DATE } from '@/lib/version';
-import { sessionApi } from '@/lib/api';
+import { settingsApi } from '@/lib/api';
 
 interface ApiVersionInfo {
   version: string;
   build_date: string;
   environment: string;
 }
+
+type ModelPreset = {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+};
+
+const MODEL_PRESETS: ModelPreset[] = [
+  { id: 'claude-sonnet', label: 'Claude (Sonnet)', provider: 'claude', model: 'sonnet' },
+  { id: 'codex', label: 'Codex (default)', provider: 'codex', model: 'default' },
+  { id: 'gemini', label: 'Gemini (default)', provider: 'gemini', model: 'default' },
+  { id: 'kimi-2.5', label: 'Kimi 2.5', provider: 'kimi', model: '2.5' },
+  { id: 'deepseek-3.1', label: 'DeepSeek 3.1', provider: 'deepseek', model: '3.1' },
+  { id: 'minimax-2.1', label: 'MiniMax 2.1', provider: 'minimax', model: '2.1' },
+  { id: 'deepseek-r1', label: 'DeepSeek R1', provider: 'deepseek', model: 'r1' },
+  { id: 'nemotron', label: 'Nemotron (default)', provider: 'nemotron', model: 'default' },
+  { id: 'custom', label: 'Custom', provider: '', model: '' },
+];
 
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState('');
@@ -18,6 +37,13 @@ export default function SettingsPage() {
   const [storedValue, setStoredValue] = useState<string | null>(null);
   const [apiVersion, setApiVersion] = useState<ApiVersionInfo | null>(null);
   const [versionError, setVersionError] = useState<string | null>(null);
+
+  const [analysisProvider, setAnalysisProvider] = useState('claude');
+  const [analysisModel, setAnalysisModel] = useState('sonnet');
+  const [analysisPreset, setAnalysisPreset] = useState('claude-sonnet');
+  const [analysisSavedMessage, setAnalysisSavedMessage] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   useEffect(() => {
     // Load saved API URL
@@ -28,6 +54,7 @@ export default function SettingsPage() {
 
     // Fetch API version
     fetchApiVersion(saved || defaultUrl);
+    fetchApiSettings(saved || defaultUrl);
   }, []);
 
   const fetchApiVersion = async (url: string) => {
@@ -45,6 +72,30 @@ export default function SettingsPage() {
     }
   };
 
+  const inferPresetId = (provider: string, model: string) => {
+    const normalizedProvider = provider.trim().toLowerCase();
+    const normalizedModel = model.trim().toLowerCase();
+    const match = MODEL_PRESETS.find(
+      p => p.provider.toLowerCase() === normalizedProvider && p.model.toLowerCase() === normalizedModel
+    );
+    return match?.id || 'custom';
+  };
+
+  const fetchApiSettings = async (url: string) => {
+    try {
+      setAnalysisError(null);
+      const data = await settingsApi.getAll(url);
+      const provider = (data.analysis_provider || 'claude').trim();
+      const model = (data.analysis_model || 'sonnet').trim();
+
+      setAnalysisProvider(provider);
+      setAnalysisModel(model);
+      setAnalysisPreset(inferPresetId(provider, model));
+    } catch {
+      setAnalysisError('Unable to fetch analysis settings');
+    }
+  };
+
   const handleSave = () => {
     try {
       // Validate URL
@@ -56,6 +107,7 @@ export default function SettingsPage() {
       
       // Refresh API version with new URL
       fetchApiVersion(apiUrl);
+      fetchApiSettings(apiUrl);
       
       setTimeout(() => setShowSavedMessage(false), 3000);
     } catch {
@@ -70,7 +122,41 @@ export default function SettingsPage() {
     setStoredValue(null);
     setShowSavedMessage(true);
     fetchApiVersion(defaultUrl);
+    fetchApiSettings(defaultUrl);
     setTimeout(() => setShowSavedMessage(false), 3000);
+  };
+
+  const handleSaveAnalysisSettings = async () => {
+    try {
+      setAnalysisError(null);
+      setAnalysisLoading(true);
+
+      // Validate API URL before calling it.
+      new URL(apiUrl);
+
+      const provider = analysisProvider.trim();
+      const model = analysisModel.trim();
+      if (!provider) {
+        setAnalysisError('Provider cannot be empty');
+        return;
+      }
+      if (!model) {
+        setAnalysisError('Model cannot be empty');
+        return;
+      }
+
+      await settingsApi.update({
+        analysis_provider: provider,
+        analysis_model: model,
+      }, apiUrl);
+
+      setAnalysisSavedMessage(true);
+      setTimeout(() => setAnalysisSavedMessage(false), 3000);
+    } catch (e: any) {
+      setAnalysisError(e?.message || 'Failed to save analysis settings');
+    } finally {
+      setAnalysisLoading(false);
+    }
   };
 
   const formatBuildDate = (dateString: string) => {
@@ -196,6 +282,102 @@ export default function SettingsPage() {
               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
             >
               Reset to Default
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Analysis Backend Configuration */}
+      <div className="bg-white border rounded-lg p-6 mt-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Server className="h-6 w-6 text-purple-600" />
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Analysis Backend</h3>
+            <p className="text-sm text-gray-600">Applies to the next document you submit for analysis.</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Preset
+            </label>
+            <select
+              value={analysisPreset}
+              onChange={(e) => {
+                const presetId = e.target.value;
+                setAnalysisPreset(presetId);
+                const preset = MODEL_PRESETS.find(p => p.id === presetId);
+                if (preset && presetId !== 'custom') {
+                  setAnalysisProvider(preset.provider);
+                  setAnalysisModel(preset.model);
+                }
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {MODEL_PRESETS.map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+            <p className="text-sm text-gray-500 mt-2">
+              Presets set the raw provider/model values sent to CLIBridge. You can fine-tune below.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Provider
+              </label>
+              <input
+                type="text"
+                value={analysisProvider}
+                onChange={(e) => {
+                  setAnalysisProvider(e.target.value);
+                  setAnalysisPreset('custom');
+                }}
+                placeholder="claude"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Model
+              </label>
+              <input
+                type="text"
+                value={analysisModel}
+                onChange={(e) => {
+                  setAnalysisModel(e.target.value);
+                  setAnalysisPreset('custom');
+                }}
+                placeholder="sonnet"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+              />
+            </div>
+          </div>
+
+          {analysisError && (
+            <div className="flex items-center gap-2 text-red-600 text-sm">
+              <AlertCircle className="h-4 w-4" />
+              {analysisError}
+            </div>
+          )}
+
+          {analysisSavedMessage && (
+            <div className="flex items-center gap-2 text-green-600 text-sm">
+              <Check className="h-4 w-4" />
+              Analysis settings saved successfully
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={handleSaveAnalysisSettings}
+              disabled={analysisLoading}
+              className="px-4 py-2 bg-gray-900 text-white rounded-md hover:bg-gray-800 font-medium disabled:opacity-50"
+            >
+              {analysisLoading ? 'Saving...' : 'Save Analysis Settings'}
             </button>
           </div>
         </div>

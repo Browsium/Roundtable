@@ -109,6 +109,23 @@ export const sessionApi = {
   },
 };
 
+// Settings API (global backend settings)
+export const settingsApi = {
+  getAll: async (baseUrl?: string): Promise<Record<string, string>> => {
+    const url = baseUrl || getApiUrl();
+    return fetchWithError(`${url}/settings`);
+  },
+
+  update: async (updates: Record<string, string>, baseUrl?: string): Promise<Record<string, string>> => {
+    const url = baseUrl || getApiUrl();
+    return fetchWithError(`${url}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+  },
+};
+
 // R2 Upload API
 export const r2Api = {
   getUploadUrl: async (sessionId: string, filename: string): Promise<{ uploadUrl: string; method: string }> => {
@@ -226,6 +243,7 @@ export class AnalysisWebSocket {
 export default {
   personaApi,
   sessionApi,
+  settingsApi,
   r2Api,
   AnalysisWebSocket,
 };

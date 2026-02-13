@@ -31,6 +31,7 @@ function SessionDetailContent() {
   const [personas, setPersonas] = useState<Record<string, Persona>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [expandedAnalysis, setExpandedAnalysis] = useState<number | null>(null);
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
@@ -142,6 +143,75 @@ function SessionDetailContent() {
     }
   };
 
+  const showNotice = (message: string) => {
+    setNotice(message);
+    setTimeout(() => setNotice(null), 3000);
+  };
+
+  const handleShare = async () => {
+    try {
+      const url = window.location.href;
+      const title = `Roundtable Analysis: ${session?.file_name || 'Session'}`;
+
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        showNotice('Share link copied to clipboard');
+        return;
+      }
+
+      window.prompt('Copy this link:', url);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      // Ignore user-cancelled share sheets.
+      if (msg.toLowerCase().includes('abort')) return;
+      setError('Failed to share session link');
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      if (!session) return;
+
+      const enrichedAnalyses = (session.analyses || []).map(a => ({
+        ...a,
+        persona_name: getPersonaName(a.persona_id),
+        persona_role: getPersonaRole(a.persona_id),
+      }));
+
+      const exportPayload = {
+        exported_at: new Date().toISOString(),
+        session: {
+          ...session,
+          analyses: enrichedAnalyses,
+        },
+      };
+
+      const safeBase = (session.file_name || 'roundtable')
+        .replace(/[^a-z0-9._-]+/gi, '_')
+        .replace(/^_+|_+$/g, '');
+      const filename = `${safeBase || 'roundtable'}.roundtable.json`;
+
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+
+      showNotice('Export downloaded');
+    } catch (e: any) {
+      setError(e?.message || 'Failed to export session');
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
@@ -213,11 +283,17 @@ function SessionDetailContent() {
             </p>
           </div>
 <div className="flex gap-2">
-          <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+          <button
+            onClick={handleShare}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
             <Share2 className="h-4 w-4 mr-2" />
             Share
           </button>
-          <button className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          >
             <Download className="h-4 w-4 mr-2" />
             Export
           </button>
@@ -235,6 +311,13 @@ function SessionDetailContent() {
           </button>
         </div>
         </div>
+
+        {/* Notice */}
+        {notice && (
+          <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
+            {notice}
+          </div>
+        )}
 
         {/* Status */}
         <div className="mt-6 p-4 bg-gray-50 rounded-lg">

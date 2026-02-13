@@ -171,12 +171,26 @@ export class SessionAnalyzer {
         return;
       }
 
+      // Use global settings for the next analysis run.
+      const DEFAULT_ANALYSIS_PROVIDER = 'claude';
+      const DEFAULT_ANALYSIS_MODEL = 'sonnet';
+
+      const configuredProvider = (await db.getSettingValue('analysis_provider'))?.trim();
+      const configuredModel = (await db.getSettingValue('analysis_model'))?.trim();
+
+      const analysisBackend = {
+        provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
+        model: configuredModel || DEFAULT_ANALYSIS_MODEL,
+      };
+
+      console.log(`Analysis backend for session ${sessionId}:`, analysisBackend);
+
       // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
       const maxConcurrency = 2; // Reduce to 2 concurrent analyses to be more conservative
       for (let i = 0; i < personas.length; i += maxConcurrency) {
         const batch = personas.slice(i, i + maxConcurrency);
         const analysisPromises = batch.map(persona =>
-          this.analyzePersona(sessionId, persona, documentText, sendMessage, db)
+          this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend)
         );
         await Promise.all(analysisPromises);
       }
@@ -240,11 +254,13 @@ export class SessionAnalyzer {
     persona: any,
     documentText: string,
     sendMessage: (msg: any) => void,
-    db: D1Client
+    db: D1Client,
+    analysisBackend: { provider: string; model: string }
   ): Promise<void> {
     console.log(`Starting analyzePersona for ${persona.id} in session ${sessionId}`);
     console.log(`Document text length: ${documentText.length}`);
     console.log(`First 100 chars of document: ${documentText.substring(0, 100)}`);
+    console.log(`Using provider/model for ${persona.id}:`, analysisBackend);
     
     try {
       // Get existing analysis or create new one
@@ -303,8 +319,8 @@ export class SessionAnalyzer {
       }
 
       const analysisRequest = {
-        provider: 'claude',
-        model: 'sonnet',
+        provider: analysisBackend.provider,
+        model: analysisBackend.model,
         systemPrompt: systemPrompt,
         messages: [
           { role: 'user', content: documentForAnalysis },
