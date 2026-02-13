@@ -1,5 +1,3 @@
-import type { D1Database } from '@cloudflare/workers-types';
-
 export interface Persona {
   id: string;
   name: string;
@@ -23,7 +21,8 @@ export interface Session {
   file_size_bytes: number;
   file_extension: string;
   selected_persona_ids: string;
-  status: 'uploaded' | 'analyzing' | 'completed' | 'failed';
+  status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
+  error_message?: string;
   created_at: string;
   updated_at: string;
 }
@@ -39,6 +38,26 @@ export interface Analysis {
   error_message?: string;
   started_at?: string;
   completed_at?: string;
+}
+
+export interface ShareToken {
+  id: number;
+  token: string;
+  session_id: string;
+  created_by: string;
+  expires_at: string;
+  view_count: number;
+  created_at: string;
+}
+
+export interface Setting {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
+export interface SessionWithAnalyses extends Session {
+  analyses?: Analysis[];
 }
 
 export class D1Client {

@@ -8,7 +8,7 @@ import { r2Routes } from './routes/r2';
 export interface Env {
   DB: D1Database;
   R2: R2Bucket;
-  SESSION_ANALYZER: DurableObjectNamespace<SessionAnalyzer>;
+  SESSION_ANALYZER: DurableObjectNamespace;
   CLIBRIDGE_URL: string;
   CLIBRIDGE_CLIENT_ID: string;
   CLIBRIDGE_CLIENT_SECRET: string;

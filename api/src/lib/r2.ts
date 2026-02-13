@@ -1,5 +1,3 @@
-import type { R2Bucket } from '@cloudflare/workers-types';
-
 export class R2Client {
   private bucket: R2Bucket;
   private bucketName: string;

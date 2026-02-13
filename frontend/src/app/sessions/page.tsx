@@ -54,6 +54,8 @@ export default function SessionsPage() {
     switch (status) {
       case 'completed':
         return <CheckCircle className="h-5 w-5 text-green-500" />;
+      case 'partial':
+        return <AlertCircle className="h-5 w-5 text-yellow-500" />;
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'analyzing':
@@ -67,6 +69,8 @@ export default function SessionsPage() {
     switch (status) {
       case 'completed':
         return 'Completed';
+      case 'partial':
+        return 'Partial';
       case 'failed':
         return 'Failed';
       case 'analyzing':
@@ -138,13 +142,14 @@ export default function SessionsPage() {
                     </p>
                     <div className="flex items-center gap-2 mt-2">
                       {getStatusIcon(session.status)}
-                      <span className={`text-sm font-medium
-                        ${session.status === 'completed' ? 'text-green-600' : ''}
-                        ${session.status === 'failed' ? 'text-red-600' : ''}
-                        ${session.status === 'analyzing' ? 'text-blue-600' : ''}
-                      `}>
-                        {getStatusText(session.status)}
-                      </span>
+                        <span className={`text-sm font-medium
+                          ${session.status === 'completed' ? 'text-green-600' : ''}
+                          ${session.status === 'partial' ? 'text-yellow-600' : ''}
+                          ${session.status === 'failed' ? 'text-red-600' : ''}
+                          ${session.status === 'analyzing' ? 'text-blue-600' : ''}
+                        `}>
+                          {getStatusText(session.status)}
+                        </span>
                       <span className="text-gray-300">|</span>
                       <span className="text-sm text-gray-500">
                         {(() => {

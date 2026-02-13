@@ -1,4 +1,3 @@
-import type { DurableObjectState, WebSocket } from '@cloudflare/workers-types';
 import type { Env } from '../index';
 import { D1Client } from '../lib/d1';
 import { CLIBridgeClient } from '../lib/clibridge';
@@ -45,7 +44,9 @@ export class SessionAnalyzer {
   }
 
   private async handleWebSocket(request: Request): Promise<Response> {
-    const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
     
     this.websockets.add(server);
     
@@ -186,7 +187,22 @@ export class SessionAnalyzer {
         session_id: sessionId,
       });
 
-      await db.updateSession(sessionId, { status: 'completed' });
+      // Set session status based on analysis outcomes
+      const finalAnalyses = await db.getAnalyses(sessionId);
+      const failedCount = finalAnalyses.filter(a => a.status === 'failed').length;
+      const completedCount = finalAnalyses.filter(a => a.status === 'completed').length;
+
+      let finalStatus: 'completed' | 'failed' | 'partial' = 'completed';
+      if (finalAnalyses.length > 0 && failedCount === finalAnalyses.length) {
+        finalStatus = 'failed';
+      } else if (failedCount > 0) {
+        finalStatus = 'partial';
+      } else if (completedCount === finalAnalyses.length) {
+        finalStatus = 'completed';
+      }
+
+      await db.updateSession(sessionId, { status: finalStatus });
+      sendMessage({ type: 'status', session_id: sessionId, status: finalStatus });
 
   } catch (error) {
     const errorMessage = String(error);
@@ -236,15 +252,20 @@ export class SessionAnalyzer {
       let analysis = analyses.find(a => a.persona_id === persona.id);
       
       if (!analysis) {
-        analysis = await db.createAnalysis({
+        const analysisId = await db.createAnalysis({
           session_id: sessionId,
           persona_id: persona.id,
           status: 'pending',
         });
+        // Refresh analyses to get the newly created analysis
+        analyses = await db.getAnalyses(sessionId);
+        analysis = analyses.find(a => a.persona_id === persona.id);
       }
 
       // Update status to running
-      await db.updateAnalysis(analysis.id, { status: 'running' });
+      if (analysis) {
+        await db.updateAnalysis(analysis.id, { status: 'running' });
+      }
       sendMessage({
         type: 'status',
         persona_id: persona.id,
@@ -271,21 +292,30 @@ export class SessionAnalyzer {
 
       // Call CLIBridge streaming endpoint
       const systemPrompt = this.buildSystemPrompt(persona);
-      console.log(`Calling CLIBridge for persona ${persona.id}`);
-      console.log(`Document text length: ${documentText.length}`);
-      console.log(`System prompt length: ${systemPrompt.length}`);
-      console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
-      console.log(`First 200 chars of system prompt: ${systemPrompt.substring(0, 200)}`);
-      
-      console.log(`CLIBridge client initialized, about to call streamAnalysis`);
-      const response = await clibridge.streamAnalysis({
+
+      // Avoid huge prompts causing upstream failures/timeouts.
+      const MAX_DOC_CHARS = 8000;
+      const documentForAnalysis = documentText.length > MAX_DOC_CHARS
+        ? documentText.slice(0, MAX_DOC_CHARS)
+        : documentText;
+      if (documentText.length > MAX_DOC_CHARS) {
+        console.log(`Truncated document text for persona ${persona.id}: ${documentText.length} -> ${documentForAnalysis.length} chars`);
+      }
+
+      const analysisRequest = {
         provider: 'claude',
         model: 'sonnet',
         systemPrompt: systemPrompt,
         messages: [
-          { role: 'user', content: documentText },
+          { role: 'user', content: documentForAnalysis },
         ],
-      });
+      };
+
+      console.log(`Calling CLIBridge for persona ${persona.id}`);
+      console.log(`Document text length: ${documentText.length} (sent: ${documentForAnalysis.length})`);
+      console.log(`System prompt length: ${systemPrompt.length}`);
+
+      const response = await clibridge.streamAnalysis(analysisRequest);
       console.log(`CLIBridge streamAnalysis returned for persona ${persona.id}:`, { 
         status: response.status, 
         statusText: response.statusText,
@@ -306,86 +336,142 @@ export class SessionAnalyzer {
         throw new Error(`CLIBridge returned ${response.status}: ${response.statusText} - ${errorText.substring(0, 200)}`);
       }
 
-      // Stream chunks
-      console.log(`Starting to stream response for persona ${persona.id}`);
-      let fullResponse = '';
-      const reader = response.body?.getReader();
-      let chunkCount = 0;
-      let receivedAnyData = false;
+      const contentType = response.headers.get('content-type') || '';
 
-      console.log(`Stream reader available for persona ${persona.id}: ${!!reader}`);
+      // Stream chunks (SSE) and accumulate the final model response
+      let fullResponse = '';
+      let receivedAnyBytes = false;
+      let chunkCount = 0;
+      let sseEventCount = 0;
+
+      const isSse = contentType.includes('text/event-stream');
+      const reader = isSse ? response.body?.getReader() : undefined;
+      console.log(`Stream reader available for persona ${persona.id}: ${!!reader} (content-type: ${contentType || 'unknown'})`);
 
       if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const handleEventData = (data: string) => {
+          const trimmed = data.trim();
+          if (!trimmed || trimmed === '[DONE]') return;
+
+          try {
+            const jsonData: any = JSON.parse(trimmed);
+            if (jsonData.type === 'chunk' && typeof jsonData.text === 'string') {
+              fullResponse += jsonData.text;
+              if (jsonData.text.length > 0) {
+                sendMessage({
+                  type: 'chunk',
+                  persona_id: persona.id,
+                  text: jsonData.text,
+                });
+              }
+              return;
+            }
+
+            if (jsonData.type === 'done') {
+              const doneText = typeof jsonData.response === 'string'
+                ? jsonData.response
+                : (typeof jsonData.text === 'string' ? jsonData.text : '');
+              if (doneText) {
+                fullResponse += doneText;
+              }
+              return;
+            }
+
+            if (jsonData.type === 'error') {
+              const err = typeof jsonData.error === 'string' ? jsonData.error : 'CLIBridge returned an error event';
+              throw new Error(err);
+            }
+          } catch (parseError) {
+            console.warn(`Failed to parse CLIBridge SSE data for persona ${persona.id}:`, trimmed.substring(0, 200));
+          }
+        };
+
         try {
           while (true) {
-            console.log(`Attempting to read chunk ${chunkCount + 1} for persona ${persona.id}`);
             const { done, value } = await reader.read();
-            console.log(`Read result for persona ${persona.id}: done=${done}, value=${!!value}, valueLength=${value?.byteLength || 0}`);
-            
+
             if (done) {
-              console.log(`Stream completed normally for persona ${persona.id}, chunks: ${chunkCount}, response length: ${fullResponse.length}`);
               break;
             }
 
-            receivedAnyData = true;
+            if (!value) {
+              continue;
+            }
+
+            receivedAnyBytes = true;
             chunkCount++;
-            const chunk = new TextDecoder().decode(value);
-            console.log(`Received chunk ${chunkCount} for persona ${persona.id} (${chunk.length} bytes):`, chunk.substring(0, 100));
-            
-            // Process SSE format directly
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const jsonData = JSON.parse(line.substring(6));
-                  console.log(`Parsed SSE data for ${persona.id}:`, jsonData.type);
-                  if (jsonData.type === 'chunk' && jsonData.text) {
-                    fullResponse += jsonData.text;
-                    console.log(`Added chunk text for ${persona.id}, total length: ${fullResponse.length}`);
-                    // Send chunk to frontend
-                    sendMessage({
-                      type: 'chunk',
-                      persona_id: persona.id,
-                      text: jsonData.text,
-                    });
-                  } else if (jsonData.type === 'done' && jsonData.response) {
-                    fullResponse += jsonData.response;
-                    console.log(`Added done response for ${persona.id}, total length: ${fullResponse.length}`);
-                  }
-                } catch (parseError) {
-                  console.warn(`Failed to parse SSE data for persona ${persona.id}:`, line.substring(0, 100));
-                }
+            buffer += decoder.decode(value, { stream: true });
+
+            let newlineIndex = buffer.indexOf('\n');
+            while (newlineIndex !== -1) {
+              let line = buffer.slice(0, newlineIndex);
+              buffer = buffer.slice(newlineIndex + 1);
+
+              // Handle CRLF
+              if (line.endsWith('\r')) line = line.slice(0, -1);
+
+              if (line.startsWith('data:')) {
+                // "data:" may or may not be followed by a single space.
+                let payload = line.slice(5);
+                if (payload.startsWith(' ')) payload = payload.slice(1);
+                sseEventCount++;
+                handleEventData(payload);
               }
+
+              newlineIndex = buffer.indexOf('\n');
+            }
+          }
+
+          // Process any remaining buffered data.
+          if (buffer.length > 0) {
+            let line = buffer;
+            if (line.endsWith('\r')) line = line.slice(0, -1);
+            if (line.startsWith('data:')) {
+              let payload = line.slice(5);
+              if (payload.startsWith(' ')) payload = payload.slice(1);
+              sseEventCount++;
+              handleEventData(payload);
             }
           }
         } catch (streamError) {
           console.error(`Streaming failed for persona ${persona.id}:`, streamError);
-          // Even if streaming failed, we might have partial content
-          console.log(`Streaming failed but had content length: ${fullResponse.length} for persona ${persona.id}`);
         } finally {
           try {
             await reader.cancel();
-            console.log(`Reader cancelled for persona ${persona.id}`);
-          } catch (cancelError) {
-            console.error(`Failed to cancel reader for persona ${persona.id}:`, cancelError);
+          } catch (_cancelError) {
+            // Ignore cancellation errors
           }
         }
       } else {
-        console.warn(`No readable stream for persona ${persona.id}`);
+        if (!isSse) {
+          console.warn(`CLIBridge returned non-SSE response for persona ${persona.id}: content-type=${contentType || 'unknown'}`);
+        }
+        const text = await response.text();
+        if (text) receivedAnyBytes = true;
+        fullResponse = text;
       }
-      
-      console.log(`Final response stats for persona ${persona.id}: chunks=${chunkCount}, length=${fullResponse.length}, receivedAnyData=${receivedAnyData}`);
-      
-      // Always attempt to parse what we have, but check if we got anything
-      if (!receivedAnyData || fullResponse.length === 0) {
-        console.warn(`No response data received for persona ${persona.id} - chunks: ${chunkCount}, receivedAnyData: ${receivedAnyData}`);
-        throw new Error('No response data received from CLIBridge');
-      }
-      console.log(`Final full response length for persona ${persona.id}: ${fullResponse.length}`);
 
-      // Only proceed with parsing if streaming was successful
-      if (!streamingSuccess && fullResponse.length === 0) {
-        console.warn(`No response data received for persona ${persona.id}`);
+      console.log(`CLIBridge response stats for persona ${persona.id}: chunks=${chunkCount}, sseEvents=${sseEventCount}, receivedAnyBytes=${receivedAnyBytes}, responseChars=${fullResponse.length}`);
+
+      // Fallback: if streaming produced nothing usable, try /v1/complete.
+      if (fullResponse.trim().length === 0) {
+        console.warn(`No usable streaming response from CLIBridge for persona ${persona.id}; falling back to complete endpoint`);
+        const completeResponse = await clibridge.completeAnalysis(analysisRequest);
+
+        if (!completeResponse.ok) {
+          const errorText = await completeResponse.text();
+          throw new Error(`CLIBridge complete returned ${completeResponse.status}: ${completeResponse.statusText} - ${errorText.substring(0, 200)}`);
+        }
+
+        const completeRaw = await completeResponse.text();
+        fullResponse = this.extractCompletionText(completeRaw);
+        console.log(`CLIBridge complete fallback response length for persona ${persona.id}: ${fullResponse.length}`);
+      }
+
+      if (fullResponse.trim().length === 0) {
         throw new Error('No response data received from CLIBridge');
       }
 
@@ -394,13 +480,27 @@ export class SessionAnalyzer {
       let result;
       try {
         // Try to extract JSON from the response
-        const jsonMatch = fullResponse.match(/```json\n([\s\S]*?)\n```/);
+        const jsonMatch = fullResponse.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/);
         if (jsonMatch) {
           result = JSON.parse(jsonMatch[1]);
           console.log(`Parsed JSON result for persona ${persona.id}`);
         } else {
-          result = JSON.parse(fullResponse);
-          console.log(`Parsed direct JSON result for persona ${persona.id}`);
+          const trimmed = fullResponse.trim();
+          try {
+            result = JSON.parse(trimmed);
+            console.log(`Parsed direct JSON result for persona ${persona.id}`);
+          } catch (_directParseError) {
+            // Best-effort: extract a JSON object from surrounding text.
+            const firstBrace = trimmed.indexOf('{');
+            const lastBrace = trimmed.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+              const maybeJson = trimmed.slice(firstBrace, lastBrace + 1);
+              result = JSON.parse(maybeJson);
+              console.log(`Parsed extracted JSON object for persona ${persona.id}`);
+            } else {
+              throw _directParseError;
+            }
+          }
         }
       } catch (parseError) {
         // If parsing fails, treat the whole response as the verdict
@@ -416,6 +516,8 @@ export class SessionAnalyzer {
           rewritten_headline_suggestion: '',
         };
       }
+
+      result = this.normalizeResult(result, persona);
 
       // Only send complete message if we have a valid result
       if (result) {
@@ -502,13 +604,159 @@ ${profile.voice_and_tone}
 TYPICAL OBJECTIONS:
 ${profile.typical_objections.join('\n')}
 
-Please evaluate the marketing content and provide your analysis in JSON format with these fields:
-- persona_role
-- overall_score (1-10)
-- dimension_scores (with relevance, technical_credibility, differentiation, actionability, trust_signals, language_fit)
-- top_3_issues
-- what_works_well
-- overall_verdict
-- rewritten_headline_suggestion`;
+EVALUATION FRAMEWORK:
+Score each dimension from 1-10 and provide specific commentary.
+- relevance: Does this speak to my actual priorities and pain points?
+- technical_credibility: Is it accurate? Does it avoid buzzword-stuffing?
+- differentiation: Can I tell how this is different from competitors?
+- actionability: Do I know what to do next after reading this?
+- trust_signals: Does this build or erode my trust? Why?
+- language_fit: Does this sound like it was written by someone who understands my world?
+
+OUTPUT FORMAT:
+Respond with ONLY valid JSON (no markdown, no code blocks, no extra text). Use this exact shape:
+{
+  "persona_role": "${profile.role}",
+  "overall_score": 7,
+  "dimension_scores": {
+    "relevance": { "score": 8, "commentary": "..." },
+    "technical_credibility": { "score": 6, "commentary": "..." },
+    "differentiation": { "score": 5, "commentary": "..." },
+    "actionability": { "score": 7, "commentary": "..." },
+    "trust_signals": { "score": 6, "commentary": "..." },
+    "language_fit": { "score": 7, "commentary": "..." }
+  },
+  "top_3_issues": [
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." },
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." },
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." }
+  ],
+  "what_works_well": ["...", "..."],
+  "overall_verdict": "...",
+  "rewritten_headline_suggestion": "..."
+}`;
+  }
+
+  private extractCompletionText(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+
+    // CLIBridge complete may return plain text or JSON-wrapped text. Handle both.
+    try {
+      const parsed: any = JSON.parse(trimmed);
+      if (typeof parsed === 'string') return parsed;
+      if (parsed && typeof parsed === 'object') {
+        const candidates = [
+          parsed.response,
+          parsed.text,
+          parsed.completion,
+          parsed.content,
+          parsed.message,
+          parsed.output,
+        ];
+        for (const c of candidates) {
+          if (typeof c === 'string' && c.trim()) return c;
+        }
+      }
+    } catch (_e) {
+      // Not JSON.
+    }
+
+    return raw;
+  }
+
+  private normalizeResult(result: any, persona: any): any {
+    const role = persona?.role || 'Unknown Persona';
+
+    if (!result || typeof result !== 'object') {
+      return {
+        persona_role: role,
+        overall_score: 0,
+        dimension_scores: {},
+        top_3_issues: [],
+        what_works_well: [],
+        overall_verdict: '',
+        rewritten_headline_suggestion: '',
+      };
+    }
+
+    const normalized: any = { ...result };
+
+    if (typeof normalized.persona_role !== 'string' || !normalized.persona_role.trim()) {
+      normalized.persona_role = role;
+    }
+
+    if (typeof normalized.overall_score !== 'number') {
+      const n = Number(normalized.overall_score);
+      normalized.overall_score = Number.isFinite(n) ? n : 0;
+    }
+
+    const expectedDims = [
+      'relevance',
+      'technical_credibility',
+      'differentiation',
+      'actionability',
+      'trust_signals',
+      'language_fit',
+    ];
+
+    if (!normalized.dimension_scores || typeof normalized.dimension_scores !== 'object') {
+      normalized.dimension_scores = {};
+    }
+
+    for (const dim of expectedDims) {
+      const v = (normalized.dimension_scores as any)[dim];
+      if (typeof v === 'number') {
+        (normalized.dimension_scores as any)[dim] = { score: v, commentary: '' };
+      } else if (typeof v === 'string') {
+        const maybeScore = Number(v);
+        (normalized.dimension_scores as any)[dim] = Number.isFinite(maybeScore)
+          ? { score: maybeScore, commentary: '' }
+          : { score: 0, commentary: v };
+      } else if (v && typeof v === 'object') {
+        const score = typeof v.score === 'number' ? v.score : Number(v.score);
+        (normalized.dimension_scores as any)[dim] = {
+          score: Number.isFinite(score) ? score : 0,
+          commentary: typeof v.commentary === 'string' ? v.commentary : (typeof v.comment === 'string' ? v.comment : ''),
+        };
+      } else {
+        (normalized.dimension_scores as any)[dim] = { score: 0, commentary: '' };
+      }
+    }
+
+    if (!Array.isArray(normalized.top_3_issues)) {
+      normalized.top_3_issues = [];
+    }
+    normalized.top_3_issues = (normalized.top_3_issues as any[]).slice(0, 3).map((issue: any) => {
+      if (typeof issue === 'string') {
+        return { issue, specific_example_from_content: '', suggested_rewrite: '' };
+      }
+      if (issue && typeof issue === 'object') {
+        return {
+          issue: typeof issue.issue === 'string' ? issue.issue : '',
+          specific_example_from_content: typeof issue.specific_example_from_content === 'string' ? issue.specific_example_from_content : '',
+          suggested_rewrite: typeof issue.suggested_rewrite === 'string' ? issue.suggested_rewrite : '',
+        };
+      }
+      return { issue: '', specific_example_from_content: '', suggested_rewrite: '' };
+    });
+
+    if (!Array.isArray(normalized.what_works_well)) {
+      normalized.what_works_well = typeof normalized.what_works_well === 'string'
+        ? [normalized.what_works_well]
+        : [];
+    }
+
+    if (typeof normalized.overall_verdict !== 'string') {
+      normalized.overall_verdict = normalized.overall_verdict != null ? String(normalized.overall_verdict) : '';
+    }
+
+    if (typeof normalized.rewritten_headline_suggestion !== 'string') {
+      normalized.rewritten_headline_suggestion = normalized.rewritten_headline_suggestion != null
+        ? String(normalized.rewritten_headline_suggestion)
+        : '';
+    }
+
+    return normalized;
   }
 }

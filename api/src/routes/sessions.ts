@@ -54,8 +54,6 @@ sessionRoutes.post('/', async (c) => {
     file_extension: file_extension || getFileExtension(file_name),
     selected_persona_ids: JSON.stringify(selected_persona_ids),
     status: 'uploaded',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
   });
   
   // Create analysis records for each persona

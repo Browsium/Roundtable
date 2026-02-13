@@ -69,8 +69,10 @@ function SessionDetailContent() {
       sessionId,
       (data) => {
         console.log('WebSocket message:', data);
-        // Refresh session data on any message
-        loadSession();
+        // Avoid hammering the API for high-frequency chunk events.
+        if (data?.type !== 'chunk') {
+          loadSession();
+        }
       },
       (err) => {
         console.error('WebSocket error:', err);
@@ -238,6 +240,9 @@ function SessionDetailContent() {
             {session.status === 'completed' && (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
+            {session.status === 'partial' && (
+              <AlertCircle className="h-8 w-8 text-yellow-500" />
+            )}
             {session.status === 'failed' && (
               <XCircle className="h-8 w-8 text-red-500" />
             )}
@@ -250,7 +255,8 @@ function SessionDetailContent() {
             <div>
               <p className="font-medium text-gray-900">
                 {session.status === 'completed' && 'All analyses complete'}
-                {session.status === 'failed' && 'All analyses failed'}
+                {session.status === 'partial' && 'Partial results available'}
+                {session.status === 'failed' && 'Analysis failed'}
                 {session.status === 'analyzing' && 'Analysis in progress...'}
                 {session.status === 'uploaded' && 'Starting analysis...'}
               </p>
@@ -335,105 +341,117 @@ function SessionDetailContent() {
               </div>
             </div>
 
-            {/* Analysis Details */}
-            {expandedAnalysis === analysis.id && analysis.status === 'completed' && (
-              <div className="border-t px-6 py-6 bg-gray-50">
-                {analysis.score_json && (() => {
-                  try {
-                    const scores = typeof analysis.score_json === 'string'
-                      ? JSON.parse(analysis.score_json)
-                      : analysis.score_json;
-                    return (
-                      <div className="mb-6">
-                        <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                          {Object.entries(scores).map(([key, value]: [string, any]) => (
-                            <div key={key} className="bg-white p-3 rounded border">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs text-gray-600 capitalize">
-                                  {key.replace('_', ' ')}
-                                </span>
-                                <span className="text-lg font-bold text-blue-600">
-                                  {value?.score || 0}/10
-                                </span>
-                              </div>
-                              <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
+             {/* Analysis Details */}
+            {expandedAnalysis === analysis.id && (
+              <>
+                {analysis.status === 'completed' && (
+                  <div className="border-t px-6 py-6 bg-gray-50">
+                    {analysis.score_json && (() => {
+                      try {
+                        const scores = typeof analysis.score_json === 'string'
+                          ? JSON.parse(analysis.score_json)
+                          : analysis.score_json;
+                        return (
+                          <div className="mb-6">
+                            <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                              {Object.entries(scores).map(([key, value]: [string, any]) => (
+                                <div key={key} className="bg-white p-3 rounded border">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs text-gray-600 capitalize">
+                                      {key.replace('_', ' ')}
+                                    </span>
+                                    <span className="text-lg font-bold text-blue-600">
+                                      {value?.score || 0}/10
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  } catch { return null; }
-                })()}
-
-                {analysis.top_issues_json && (() => {
-                  try {
-                    const issues = typeof analysis.top_issues_json === 'string'
-                      ? JSON.parse(analysis.top_issues_json)
-                      : analysis.top_issues_json;
-                    if (!Array.isArray(issues) || issues.length === 0) return null;
-                    return (
-                      <div className="mb-6">
-                        <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
-                        <div className="space-y-3">
-                          {issues.map((issue: any, idx: number) => (
-                            <div key={idx} className="bg-white p-4 rounded border">
-                              <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
-                              <div className="text-sm text-gray-600 mb-2">
-                                <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
-                              </div>
-                              <div className="text-sm text-green-700">
-                                <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  } catch { return null; }
-                })()}
-
-                {analysis.rewritten_suggestions_json && (() => {
-                  try {
-                    const suggestions = typeof analysis.rewritten_suggestions_json === 'string'
-                      ? JSON.parse(analysis.rewritten_suggestions_json)
-                      : analysis.rewritten_suggestions_json;
-                    return (
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-900 mb-3">Additional Feedback</h4>
-                        <div className="bg-white p-4 rounded border">
-                          {suggestions?.what_works_well?.length > 0 && (
-                            <div className="mb-3">
-                              <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
-                              <ul className="list-disc list-inside text-sm text-gray-600">
-                                {suggestions.what_works_well.map((item: string, idx: number) => (
-                                  <li key={idx}>{item}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          <div className="mb-3">
-                            <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
-                            <p className="text-sm text-gray-600">{suggestions?.overall_verdict || ''}</p>
                           </div>
-                          {suggestions?.rewritten_headline && (
-                            <div>
-                              <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
-                              <p className="text-sm text-gray-600 italic">&ldquo;{suggestions.rewritten_headline}&rdquo;</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  } catch { return null; }
-                })()}
+                        );
+                      } catch { return null; }
+                    })()}
 
-                {analysis.error_message && (
-                  <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
-                    Error: {analysis.error_message}
+                    {analysis.top_issues_json && (() => {
+                      try {
+                        const issues = typeof analysis.top_issues_json === 'string'
+                          ? JSON.parse(analysis.top_issues_json)
+                          : analysis.top_issues_json;
+                        if (!Array.isArray(issues) || issues.length === 0) return null;
+                        return (
+                          <div className="mb-6">
+                            <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
+                            <div className="space-y-3">
+                              {issues.map((issue: any, idx: number) => (
+                                <div key={idx} className="bg-white p-4 rounded border">
+                                  <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
+                                  <div className="text-sm text-gray-600 mb-2">
+                                    <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
+                                  </div>
+                                  <div className="text-sm text-green-700">
+                                    <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      } catch { return null; }
+                    })()}
+
+                    {analysis.rewritten_suggestions_json && (() => {
+                      try {
+                        const suggestions = typeof analysis.rewritten_suggestions_json === 'string'
+                          ? JSON.parse(analysis.rewritten_suggestions_json)
+                          : analysis.rewritten_suggestions_json;
+                        return (
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-900 mb-3">Additional Feedback</h4>
+                            <div className="bg-white p-4 rounded border">
+                              {suggestions?.what_works_well?.length > 0 && (
+                                <div className="mb-3">
+                                  <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
+                                  <ul className="list-disc list-inside text-sm text-gray-600">
+                                    {suggestions.what_works_well.map((item: string, idx: number) => (
+                                      <li key={idx}>{item}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              <div className="mb-3">
+                                <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
+                                <p className="text-sm text-gray-600">{suggestions?.overall_verdict || ''}</p>
+                              </div>
+                              {suggestions?.rewritten_headline && (
+                                <div>
+                                  <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
+                                  <p className="text-sm text-gray-600 italic">&ldquo;{suggestions.rewritten_headline}&rdquo;</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      } catch { return null; }
+                    })()}
+
+                    {analysis.error_message && (
+                      <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+                        Error: {analysis.error_message}
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+                {analysis.status === 'failed' && (
+                  <div className="border-t px-6 py-6 bg-red-50">
+                    <div className="text-sm text-red-800">
+                      <span className="font-medium">Error:</span>{' '}
+                      {analysis.error_message || 'Analysis failed'}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         ))}

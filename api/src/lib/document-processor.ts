@@ -109,7 +109,8 @@ async function extractDocxText(fileBuffer: ArrayBuffer): Promise<ExtractedDocume
         rawResult = await mammoth.extractRawText({ buffer: uint8Array });
       } catch (secondError) {
         console.error('Both mammoth parameter formats failed:', { firstError, secondError });
-        throw new Error(`Mammoth extraction failed with both formats: ${secondError.message}`);
+        const secondErrorMessage = secondError instanceof Error ? secondError.message : String(secondError);
+        throw new Error(`Mammoth extraction failed with both formats: ${secondErrorMessage}`);
       }
     }
     console.log('Raw extraction result:', {

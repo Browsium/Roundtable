@@ -8,6 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "roundtable-db"
 database_id = "31f5b7ba-5993-4df4-91f6-13e53fa83208"
+migrations_dir = "migrations"
 
 # R2 Bucket
 [[r2_buckets]]

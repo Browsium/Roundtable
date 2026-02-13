@@ -41,15 +41,20 @@ export class CLIBridgeClient {
     };
   }
 
-  async streamAnalysis(request: StreamRequest): Promise<Response> {
-    const url = `${this.config.url}/v1/stream`;
-    const headers = this.getHeaders();
-    const body = JSON.stringify({
+  private buildRequestBody(request: StreamRequest): string {
+    return JSON.stringify({
       provider: request.provider,
       model: request.model,
       system_prompt: request.systemPrompt,
       messages: request.messages,
     });
+  }
+
+  async streamAnalysis(request: StreamRequest): Promise<Response> {
+    const url = `${this.config.url}/v1/stream`;
+    const headers = this.getHeaders();
+    headers['Accept'] = 'text/event-stream';
+    const body = this.buildRequestBody(request);
 
     // Log the request for debugging (remove in production)
     console.log('CLIBridge streamAnalysis request:', { 
@@ -122,6 +127,79 @@ export class CLIBridgeClient {
 
     console.error('CLIBridge streamAnalysis failed after all retries:', lastError);
     throw lastError || new Error('CLIBridge stream failed after 3 attempts');
+  }
+
+  async completeAnalysis(request: StreamRequest): Promise<Response> {
+    const url = `${this.config.url}/v1/complete`;
+    const headers = this.getHeaders();
+    const body = this.buildRequestBody(request);
+
+    console.log('CLIBridge completeAnalysis request:', {
+      url,
+      headers: {
+        'CF-Access-Client-Id': headers['CF-Access-Client-Id'] ? '[REDACTED]' : undefined,
+        'CF-Access-Client-Secret': headers['CF-Access-Client-Secret'] ? '[REDACTED]' : undefined,
+        'X-API-Key': headers['X-API-Key'] ? '[REDACTED]' : undefined,
+        'Content-Type': headers['Content-Type']
+      },
+      bodyPreview: body.substring(0, 200) + '...'
+    });
+
+    // Retry logic for transient failures
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`CLIBridge completeAnalysis attempt ${attempt}`);
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body,
+        });
+
+        console.log(`CLIBridge completeAnalysis response attempt ${attempt}:`, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: [...response.headers.entries()],
+        });
+
+        if (response.ok) {
+          console.log(`CLIBridge completeAnalysis successful attempt ${attempt}`);
+          return response;
+        }
+
+        const error = await response.text();
+        console.log(`CLIBridge complete error response body (attempt ${attempt}):`, error.substring(0, 1000));
+        const errorInfo = `CLIBridge complete failed: ${response.status} ${response.statusText} - ${error.substring(0, 500)}`;
+        console.error(`CLIBridge complete error (attempt ${attempt}):`, errorInfo);
+
+        lastError = new Error(errorInfo);
+
+        // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
+        if (response.status < 500 && response.status >= 400) {
+          console.log(`CLIBridge completeAnalysis breaking retry loop on client error ${response.status}`);
+          break;
+        }
+
+        if (attempt < 3) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`CLIBridge completeAnalysis waiting ${delay}ms before retry ${attempt + 1}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      } catch (error) {
+        console.error(`CLIBridge complete network error (attempt ${attempt}):`, error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (attempt < 3) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`CLIBridge completeAnalysis waiting ${delay}ms before retry ${attempt + 1} after network error`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    console.error('CLIBridge completeAnalysis failed after all retries:', lastError);
+    throw lastError || new Error('CLIBridge complete failed after 3 attempts');
   }
 
   async uploadSkill(request: SkillUploadRequest): Promise<void> {

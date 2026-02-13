@@ -20,7 +20,7 @@ export interface Session {
   file_size_bytes?: number;
   file_extension?: string;
   selected_persona_ids: string | string[];
-  status: 'uploaded' | 'analyzing' | 'completed' | 'failed';
+  status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
   created_at: string;
   updated_at?: string;
   analyses?: Analysis[];
@@ -46,10 +46,11 @@ export interface Analysis {
 }
 
 export interface WebSocketMessage {
-  type: 'chunk' | 'complete' | 'error' | 'all_complete';
+  type: 'chunk' | 'complete' | 'error' | 'all_complete' | 'status';
   persona_id?: string;
   text?: string;
   result?: any;
   error?: string;
   session_id?: string;
+  status?: string;
 }
