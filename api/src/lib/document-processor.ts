@@ -98,7 +98,20 @@ async function extractDocxText(fileBuffer: ArrayBuffer): Promise<ExtractedDocume
     console.log('Converted to Uint8Array, attempting text extraction');
     
     // Try to extract raw text
-    const rawResult = await mammoth.extractRawText({ buffer: uint8Array });
+    // Different mammoth versions may expect different parameter names
+    // Try both buffer and arrayBuffer to be safe
+    let rawResult;
+    try {
+      rawResult = await mammoth.extractRawText({ arrayBuffer: uint8Array.buffer });
+    } catch (firstError) {
+      console.log('First attempt with arrayBuffer failed, trying buffer:', firstError);
+      try {
+        rawResult = await mammoth.extractRawText({ buffer: uint8Array });
+      } catch (secondError) {
+        console.error('Both mammoth parameter formats failed:', { firstError, secondError });
+        throw new Error(`Mammoth extraction failed with both formats: ${secondError.message}`);
+      }
+    }
     console.log('Raw extraction result:', {
       hasValue: !!rawResult.value,
       valueLength: rawResult.value?.length || 0,
