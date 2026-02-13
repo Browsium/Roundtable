@@ -17,6 +17,7 @@ export class SessionAnalyzer {
   private state: DurableObjectState;
   private env: Env;
   private websockets: Set<WebSocket> = new Set();
+  private analysisStarted: boolean = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -76,6 +77,15 @@ export class SessionAnalyzer {
   }
 
   private async startAnalysis(sessionId: string, ws?: WebSocket): Promise<void> {
+    // Prevent duplicate analysis starts
+    if (this.analysisStarted) {
+      console.log(`Analysis already started for session ${sessionId}, ignoring duplicate request`);
+      return;
+    }
+    
+    this.analysisStarted = true;
+    console.log(`Starting analysis for session ${sessionId}`);
+    
     const db = new D1Client(this.env.DB);
 
     const sendMessage = (msg: any) => {

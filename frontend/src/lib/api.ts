@@ -144,6 +144,8 @@ export class AnalysisWebSocket {
   private reconnectAttempts = 0;
   private maxReconnects = 3;
   private reconnectTimeouts = [2000, 4000, 8000]; // Exponential backoff
+  private analysisStarted = false;
+  private analysisComplete = false;
 
   constructor(
     sessionId: string,
@@ -156,19 +158,31 @@ export class AnalysisWebSocket {
   }
 
   connect(): void {
+    // Don't reconnect if analysis is complete
+    if (this.analysisComplete) {
+      return;
+    }
+    
     const wsUrl = getApiUrl().replace('https://', 'wss://') + `/sessions/${this.sessionId}/analyze`;
 
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
-      // Start analysis
-      this.send({ action: 'start_analysis', session_id: this.sessionId });
+      // Start analysis only if not already started
+      if (!this.analysisStarted) {
+        this.analysisStarted = true;
+        this.send({ action: 'start_analysis', session_id: this.sessionId });
+      }
     };
 
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        // Track when analysis is complete
+        if (data.type === 'all_complete') {
+          this.analysisComplete = true;
+        }
         this.onMessage(data);
       } catch (error) {
         this.onError(error);
@@ -180,6 +194,11 @@ export class AnalysisWebSocket {
     };
 
     this.ws.onclose = () => {
+      // Don't reconnect if analysis is complete
+      if (this.analysisComplete) {
+        return;
+      }
+      
       if (this.reconnectAttempts < this.maxReconnects) {
         const timeout = this.reconnectTimeouts[this.reconnectAttempts];
         setTimeout(() => {
