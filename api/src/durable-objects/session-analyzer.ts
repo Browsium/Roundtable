@@ -246,6 +246,7 @@ export class SessionAnalyzer {
       console.log(`Starting to stream response for persona ${persona.id}`);
       let fullResponse = '';
       const reader = response.body?.getReader();
+      let streamingSuccess = false;
 
       if (reader) {
         try {
@@ -254,6 +255,7 @@ export class SessionAnalyzer {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}`);
+              streamingSuccess = true;
               break;
             }
 
@@ -282,18 +284,11 @@ export class SessionAnalyzer {
         console.warn(`No readable stream for persona ${persona.id}`);
       }
       console.log(`Full response length for persona ${persona.id}: ${fullResponse.length}`);
-        } catch (streamError) {
-          console.error(`Streaming failed for persona ${persona.id}:`, streamError);
-          throw new Error(`Streaming failed: ${streamError}`);
-        } finally {
-          try {
-            await reader.cancel();
-          } catch (cancelError) {
-            console.error(`Failed to cancel reader for persona ${persona.id}:`, cancelError);
-          }
-        }
-      } else {
-        console.warn(`No readable stream for persona ${persona.id}`);
+
+      // Only proceed with parsing if streaming was successful
+      if (!streamingSuccess && fullResponse.length === 0) {
+        console.warn(`No response data received for persona ${persona.id}`);
+        throw new Error('No response data received from CLIBridge');
       }
 
       // Parse final result
