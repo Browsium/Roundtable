@@ -156,7 +156,7 @@ export class SessionAnalyzer {
       }
 
       // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
-      const maxConcurrency = 3; // Limit to 3 concurrent analyses
+      const maxConcurrency = 2; // Reduce to 2 concurrent analyses to be more conservative
       for (let i = 0; i < personas.length; i += maxConcurrency) {
         const batch = personas.slice(i, i + maxConcurrency);
         const analysisPromises = batch.map(persona =>
@@ -376,6 +376,8 @@ export class SessionAnalyzer {
       // Provide more context for common errors
       if (errorString.includes('Too many subrequests')) {
         userFriendlyError = 'System is busy processing requests. Please try again.';
+      } else if (errorString.includes('520')) {
+        userFriendlyError = 'Temporary connectivity issue with analysis service. Please try again.';
       }
       
       console.log(`Sending error message for persona ${persona.id}:`, userFriendlyError);
