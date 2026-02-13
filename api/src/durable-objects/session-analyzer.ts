@@ -274,8 +274,28 @@ export class SessionAnalyzer {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
+              // Process any remaining data in buffer
               if (buffer.length > 0) {
-                console.log(`Remaining buffer for ${persona.id}: ${buffer.substring(0, 200)}`);
+                console.log(`Processing remaining buffer for ${persona.id}: ${buffer.substring(0, 200)}`);
+                const lines = buffer.split('\n');
+                for (const line of lines) {
+                  console.log(`Processing final line for ${persona.id}:`, line.substring(0, 100));
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const jsonData = JSON.parse(line.substring(6));
+                      console.log(`Parsed final SSE data for ${persona.id}:`, jsonData.type);
+                      if (jsonData.type === 'chunk' && jsonData.text) {
+                        fullResponse += jsonData.text;
+                        console.log(`Added final chunk text for ${persona.id}, new length: ${fullResponse.length}`);
+                      } else if (jsonData.type === 'done' && jsonData.response) {
+                        fullResponse += jsonData.response;
+                        console.log(`Added final done response for ${persona.id}, new length: ${fullResponse.length}`);
+                      }
+                    } catch (parseError) {
+                      console.warn(`Failed to parse final SSE data line for persona ${persona.id}:`, line.substring(0, 100));
+                    }
+                  }
+                }
               }
               if (fullResponse.length > 0) {
                 console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
