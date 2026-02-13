@@ -231,11 +231,17 @@ export class SessionAnalyzer {
       });
 
       // Call CLIBridge streaming endpoint
+      const systemPrompt = this.buildSystemPrompt(persona);
       console.log(`Calling CLIBridge for persona ${persona.id}`);
+      console.log(`Document text length: ${documentText.length}`);
+      console.log(`System prompt length: ${systemPrompt.length}`);
+      console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
+      console.log(`First 200 chars of system prompt: ${systemPrompt.substring(0, 200)}`);
+      
       const response = await clibridge.streamAnalysis({
         provider: 'claude',
         model: 'sonnet',
-        systemPrompt: this.buildSystemPrompt(persona),
+        systemPrompt: systemPrompt,
         messages: [
           { role: 'user', content: documentText },
         ],
@@ -266,6 +272,7 @@ export class SessionAnalyzer {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
+              console.log(`First 500 chars of response: ${fullResponse.substring(0, 500)}`);
               streamingSuccess = true;
               break;
             }
@@ -295,6 +302,9 @@ export class SessionAnalyzer {
         console.warn(`No readable stream for persona ${persona.id}`);
       }
       console.log(`Full response length for persona ${persona.id}: ${fullResponse.length}`);
+      if (fullResponse.length > 0) {
+        console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
+      }
 
       // Only proceed with parsing if streaming was successful
       if (!streamingSuccess && fullResponse.length === 0) {
