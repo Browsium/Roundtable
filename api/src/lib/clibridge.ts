@@ -42,23 +42,59 @@ export class CLIBridgeClient {
   }
 
   async streamAnalysis(request: StreamRequest): Promise<Response> {
-    const response = await fetch(`${this.config.url}/v1/stream`, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        provider: request.provider,
-        model: request.model,
-        system_prompt: request.systemPrompt,
-        messages: request.messages,
-      }),
+    const url = `${this.config.url}/v1/stream`;
+    const headers = this.getHeaders();
+    const body = JSON.stringify({
+      provider: request.provider,
+      model: request.model,
+      system_prompt: request.systemPrompt,
+      messages: request.messages,
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`CLIBridge stream failed: ${response.status} - ${error}`);
+    // Retry logic for transient failures
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // Log the request for debugging (remove in production)
+        console.log(`CLIBridge request (attempt ${attempt}):`, { url, headers, body: body.substring(0, 200) + '...' });
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body,
+        });
+
+        if (response.ok) {
+          return response;
+        }
+
+        const error = await response.text();
+        const errorInfo = `CLIBridge stream failed: ${response.status} ${response.statusText} - ${error.substring(0, 500)}`;
+        console.error(`CLIBridge error (attempt ${attempt}):`, errorInfo);
+        
+        lastError = new Error(errorInfo);
+        
+        // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
+        if (response.status < 500 && response.status >= 400) {
+          break;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+      } catch (error) {
+        console.error(`CLIBridge network error (attempt ${attempt}):`, error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Wait before retrying
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+      }
     }
 
-    return response;
+    throw lastError || new Error('CLIBridge stream failed after 3 attempts');
   }
 
   async uploadSkill(request: SkillUploadRequest): Promise<void> {
@@ -67,20 +103,54 @@ export class CLIBridgeClient {
     formData.append('manifest', new Blob([request.manifest], { type: 'application/yaml' }), 'manifest.yaml');
     formData.append('template', new Blob([request.template], { type: 'text/plain' }), 'analyze.tmpl');
 
-    const response = await fetch(`${this.config.url}/admin/skills/upload`, {
-      method: 'POST',
-      headers: {
-        'CF-Access-Client-Id': this.config.clientId,
-        'CF-Access-Client-Secret': this.config.clientSecret,
-        'X-API-Key': this.config.apiKey,
-      },
-      body: formData,
-    });
+    const url = `${this.config.url}/admin/skills/upload`;
+    const headers = {
+      'CF-Access-Client-Id': this.config.clientId,
+      'CF-Access-Client-Secret': this.config.clientSecret,
+      'X-API-Key': this.config.apiKey,
+    };
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`CLIBridge skill upload failed: ${response.status} - ${error}`);
+    // Retry logic for transient failures
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (response.ok) {
+          return;
+        }
+
+        const error = await response.text();
+        const errorInfo = `CLIBridge skill upload failed: ${response.status} ${response.statusText} - ${error.substring(0, 500)}`;
+        console.error(`CLIBridge upload error (attempt ${attempt}):`, errorInfo);
+        
+        lastError = new Error(errorInfo);
+        
+        // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
+        if (response.status < 500 && response.status >= 400) {
+          break;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+      } catch (error) {
+        console.error(`CLIBridge upload network error (attempt ${attempt}):`, error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Wait before retrying
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        }
+      }
     }
+
+    throw lastError || new Error('CLIBridge skill upload failed after 3 attempts');
   }
 
   async cleanupSkills(prefix: string, olderThanDays: number): Promise<void> {
