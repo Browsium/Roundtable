@@ -1,3 +1,3 @@
-// Frontend version - bump this when deploying new versions
-export const FRONTEND_VERSION = '1.1.0';
-export const BUILD_DATE = new Date().toISOString();
+// Single source of truth is frontend/package.json version (wired through next.config.ts env).
+export const FRONTEND_VERSION = process.env.NEXT_PUBLIC_FRONTEND_VERSION || '0.0.0';
+export const BUILD_DATE = process.env.NEXT_PUBLIC_BUILD_DATE || '';

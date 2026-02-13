@@ -4,6 +4,7 @@ import { SessionAnalyzer } from './durable-objects/session-analyzer';
 import { personaRoutes } from './routes/personas';
 import { sessionRoutes } from './routes/sessions';
 import { r2Routes } from './routes/r2';
+import pkg from '../package.json';
 
 export interface Env {
   DB: D1Database;
@@ -16,6 +17,7 @@ export interface Env {
 }
 
 const app = new Hono<{ Bindings: Env }>();
+const BUILD_DATE = new Date().toISOString();
 
 // CORS middleware
 app.use('*', cors({
@@ -30,8 +32,8 @@ app.get('/', (c) => c.json({ status: 'ok', service: 'roundtable-api' }));
 
 // Version endpoint
 app.get('/version', (c) => c.json({
-  version: '1.1.0',
-  build_date: new Date().toISOString(),
+  version: pkg.version,
+  build_date: BUILD_DATE,
   environment: 'production',
   service: 'roundtable-api'
 }));
