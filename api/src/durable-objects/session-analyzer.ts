@@ -302,38 +302,15 @@ export class SessionAnalyzer {
       let fullResponse = '';
       const reader = response.body?.getReader();
       let streamingSuccess = false;
+      let chunkCount = 0;
 
       if (reader) {
         try {
-          let chunkCount = 0;
-          let buffer = '';
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
               console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
               // Process any remaining data in buffer
-              if (buffer.length > 0) {
-                console.log(`Processing remaining buffer for ${persona.id}: ${buffer.substring(0, 200)}`);
-                const lines = buffer.split('\n');
-                for (const line of lines) {
-                  console.log(`Processing final line for ${persona.id}:`, line.substring(0, 100));
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const jsonData = JSON.parse(line.substring(6));
-                      console.log(`Parsed final SSE data for ${persona.id}:`, jsonData.type);
-                      if (jsonData.type === 'chunk' && jsonData.text) {
-                        fullResponse += jsonData.text;
-                        console.log(`Added final chunk text for ${persona.id}, new length: ${fullResponse.length}`);
-                      } else if (jsonData.type === 'done' && jsonData.response) {
-                        fullResponse += jsonData.response;
-                        console.log(`Added final done response for ${persona.id}, new length: ${fullResponse.length}`);
-                      }
-                    } catch (parseError) {
-                      console.warn(`Failed to parse final SSE data line for persona ${persona.id}:`, line.substring(0, 100));
-                    }
-                  }
-                }
-              }
               if (fullResponse.length > 0) {
                 console.log(`Full response preview for ${persona.id}: ${fullResponse.substring(0, 1000)}...`);
               } else {
@@ -348,13 +325,10 @@ export class SessionAnalyzer {
             console.log(`Received raw chunk ${chunkCount} for persona ${persona.id} (length: ${chunk.length}):`, chunk.substring(0, 200));
             
             // Buffer the chunk data for proper line parsing
-            buffer += chunk;
+            let buffer = chunk; // Simplified for debugging
             const lines = buffer.split('\n');
             
-            // Keep the last incomplete line in buffer
-            buffer = lines.pop() || '';
-            
-            // Process complete lines
+            // Process lines
             for (const line of lines) {
               console.log(`Processing line for ${persona.id}:`, line.substring(0, 100));
               if (line.startsWith('data: ')) {
