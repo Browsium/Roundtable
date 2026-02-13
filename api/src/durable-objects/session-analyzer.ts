@@ -132,12 +132,24 @@ export class SessionAnalyzer {
       // Extract text
       const fileBuffer = await r2Object.arrayBuffer();
       console.log(`Extracting text from document, buffer size: ${fileBuffer.byteLength} bytes`);
-      const { text: documentText } = await extractTextFromDocument(
+      const extractedDoc = await extractTextFromDocument(
         fileBuffer,
         session.file_extension
       );
+      const documentText = extractedDoc.text;
       console.log(`Extracted document text, length: ${documentText.length}`);
       console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
+      
+      // Check if extraction returned an error message
+      if (documentText.startsWith('[') && documentText.includes('document:') && documentText.includes('error')) {
+        console.warn('Document extraction appears to have failed, sending error to frontend');
+        sendMessage({
+          type: 'error',
+          error: 'Failed to process document: ' + documentText,
+        });
+        await db.updateSession(sessionId, { status: 'failed' });
+        return;
+      }
 
       // Get personas
       const selectedPersonaIds = JSON.parse(session.selected_persona_ids);

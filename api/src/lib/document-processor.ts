@@ -78,31 +78,54 @@ async function extractPdfText(fileBuffer: ArrayBuffer): Promise<ExtractedDocumen
 
 async function extractDocxText(fileBuffer: ArrayBuffer): Promise<ExtractedDocument> {
   try {
-    const mammoth = await import('mammoth');
+    console.log(`Attempting DOCX extraction for ${fileBuffer.byteLength} byte file`);
+    
+    // Try to import mammoth
+    let mammoth;
+    try {
+      mammoth = await import('mammoth');
+      console.log('Successfully imported mammoth library');
+    } catch (importError) {
+      console.error('Failed to import mammoth library:', importError);
+      return {
+        text: `[DOCX document: ${fileBuffer.byteLength} bytes. Document processing service temporarily unavailable. Please try again or upload as plain text.]`,
+        metadata: {},
+      };
+    }
     
     // Convert ArrayBuffer to Uint8Array for mammoth
     const uint8Array = new Uint8Array(fileBuffer);
+    console.log('Converted to Uint8Array, attempting text extraction');
     
-    // Try to extract raw text first
+    // Try to extract raw text
     const rawResult = await mammoth.extractRawText({ buffer: uint8Array });
+    console.log('Raw extraction result:', {
+      hasValue: !!rawResult.value,
+      valueLength: rawResult.value?.length || 0,
+      hasMessages: rawResult.messages?.length > 0,
+      messageCount: rawResult.messages?.length || 0
+    });
     
     if (rawResult.value && rawResult.value.trim().length > 0) {
+      const trimmedText = rawResult.value.trim();
+      console.log(`Successfully extracted ${trimmedText.length} characters from DOCX`);
       return {
-        text: rawResult.value,
+        text: trimmedText,
         metadata: {
-          title: rawResult.value.split('\n')[0]?.substring(0, 100) || undefined,
+          title: trimmedText.split('\n')[0]?.substring(0, 100) || undefined,
         },
       };
     }
 
+    console.warn('DOCX file has no extractable text content');
     return {
-      text: `[DOCX file has no extractable text content]`,
+      text: `[DOCX document: ${fileBuffer.byteLength} bytes. No text content found in document. Please ensure document contains text or try uploading as plain text.]`,
       metadata: {},
     };
   } catch (error) {
     console.error('DOCX extraction error:', error);
     return {
-      text: `[DOCX document: ${fileBuffer.byteLength} bytes. Unable to extract text: ${String(error)}]`,
+      text: `[DOCX document: ${fileBuffer.byteLength} bytes. Temporary processing error: ${String(error)}. Please try again or contact support.]`,
       metadata: {},
     };
   }
