@@ -30,7 +30,7 @@ app.get('/', (c) => c.json({ status: 'ok', service: 'roundtable-api' }));
 
 // Version endpoint
 app.get('/version', (c) => c.json({
-  version: '1.0.4',
+  version: '1.0.5',
   build_date: new Date().toISOString(),
   environment: 'production',
   service: 'roundtable-api'
