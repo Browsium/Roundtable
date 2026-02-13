@@ -133,12 +133,43 @@ export class SessionAnalyzer {
         return;
       }
 
+      // Use global settings for the next analysis run, and persist them on the session for reporting.
+      const DEFAULT_ANALYSIS_PROVIDER = 'claude';
+      const DEFAULT_ANALYSIS_MODEL = 'sonnet';
+
+      const configuredProvider = (await db.getSettingValue('analysis_provider'))?.trim();
+      const configuredModel = (await db.getSettingValue('analysis_model'))?.trim();
+
+      const analysisBackend = {
+        provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
+        model: configuredModel || DEFAULT_ANALYSIS_MODEL,
+      };
+
+      console.log(`Analysis backend for session ${sessionId}:`, analysisBackend);
+
       this.analysisStarted = true;
       console.log(`Starting analysis for session ${sessionId}`);
-
+      
       // Update session status
-      await db.updateSession(sessionId, { status: 'analyzing' });
+      await db.updateSession(sessionId, {
+        status: 'analyzing',
+        analysis_provider: analysisBackend.provider,
+        analysis_model: analysisBackend.model,
+      });
       sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
+
+      // Best-effort: persist backend on all per-persona analyses for reporting, even if a persona never starts.
+      try {
+        const existingAnalyses = await db.getAnalyses(sessionId);
+        for (const a of existingAnalyses) {
+          await db.updateAnalysis(a.id, {
+            analysis_provider: analysisBackend.provider,
+            analysis_model: analysisBackend.model,
+          });
+        }
+      } catch (e) {
+        console.warn(`Failed to persist analysis backend on analyses for session ${sessionId}:`, e);
+      }
 
       // Get document from R2
       const r2Object = await this.env.R2.get(session.file_r2_key);
@@ -191,20 +222,6 @@ export class SessionAnalyzer {
         await db.updateSession(sessionId, { status: 'failed' });
         return;
       }
-
-      // Use global settings for the next analysis run.
-      const DEFAULT_ANALYSIS_PROVIDER = 'claude';
-      const DEFAULT_ANALYSIS_MODEL = 'sonnet';
-
-      const configuredProvider = (await db.getSettingValue('analysis_provider'))?.trim();
-      const configuredModel = (await db.getSettingValue('analysis_model'))?.trim();
-
-      const analysisBackend = {
-        provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
-        model: configuredModel || DEFAULT_ANALYSIS_MODEL,
-      };
-
-      console.log(`Analysis backend for session ${sessionId}:`, analysisBackend);
 
       // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
       const maxConcurrency = 2; // Reduce to 2 concurrent analyses to be more conservative
@@ -300,8 +317,14 @@ export class SessionAnalyzer {
       }
 
       // Update status to running
+      const startedAt = new Date().toISOString();
       if (analysis) {
-        await db.updateAnalysis(analysis.id, { status: 'running' });
+        await db.updateAnalysis(analysis.id, {
+          status: 'running',
+          started_at: startedAt,
+          analysis_provider: analysisBackend.provider,
+          analysis_model: analysisBackend.model,
+        });
       }
       sendMessage({
         type: 'status',
@@ -312,20 +335,6 @@ export class SessionAnalyzer {
       // Initialize CLIBridge client
       console.log(`Initializing CLIBridge client for persona ${persona.id}`);
       const clibridge = new CLIBridgeClient(this.env);
-
-      // Update analysis status
-      if (analysis) {
-        await db.updateAnalysis(analysis.id, {
-          status: 'running',
-          started_at: new Date().toISOString(),
-        });
-      }
-
-      sendMessage({
-        type: 'status',
-        persona_id: persona.id,
-        status: 'running',
-      });
 
       // Call CLIBridge streaming endpoint
       const systemPrompt = this.buildSystemPrompt(persona);
@@ -669,6 +678,8 @@ export class SessionAnalyzer {
           status: 'failed',
           error_message: String(error),
           completed_at: new Date().toISOString(),
+          analysis_provider: analysisBackend.provider,
+          analysis_model: analysisBackend.model,
         });
       }
     }

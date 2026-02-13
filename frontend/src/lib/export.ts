@@ -20,6 +20,8 @@ export type ExportAnalysis = {
   persona_name: string;
   persona_role: string;
   status: Analysis['status'];
+  analysis_provider: string;
+  analysis_model: string;
   error_message?: string;
   dimension_scores: Partial<Record<DimensionKey, DimensionScore>>;
   top_issues: Array<{
@@ -45,6 +47,12 @@ export type ExportModel = {
     file_name: string;
     created_at: string;
     status: Session['status'];
+    analysis_provider: string;
+    analysis_model: string;
+  };
+  analysis_backend: {
+    provider: string;
+    model: string;
   };
   stats: {
     personas_total: number;
@@ -234,10 +242,16 @@ function parseSuggestions(suggestionsJson: unknown): {
 export function buildExportModel(session: Session, personasById: Record<string, Persona>): ExportModel {
   const exportedAt = new Date().toISOString();
 
+  const sessionProvider = (session.analysis_provider || '').trim();
+  const sessionModel = (session.analysis_model || '').trim();
+
   const analyses: ExportAnalysis[] = (session.analyses || []).map((a) => {
     const persona = personasById[a.persona_id];
     const personaName = persona?.name || a.persona_name || 'Unknown Persona';
     const personaRole = persona?.role || '';
+
+    const analysisProvider = (a.analysis_provider || sessionProvider || '').trim();
+    const analysisModel = (a.analysis_model || sessionModel || '').trim();
 
     const dimensionScores = parseDimensionScores(a.score_json);
     const topIssues = parseTopIssues(a.top_issues_json);
@@ -248,6 +262,8 @@ export function buildExportModel(session: Session, personasById: Record<string, 
       persona_name: personaName,
       persona_role: personaRole,
       status: a.status,
+      analysis_provider: analysisProvider,
+      analysis_model: analysisModel,
       error_message: a.error_message,
       dimension_scores: dimensionScores,
       top_issues: topIssues,
@@ -260,6 +276,9 @@ export function buildExportModel(session: Session, personasById: Record<string, 
   const completed = analyses.filter(a => a.status === 'completed');
   const failed = analyses.filter(a => a.status === 'failed');
   const pendingOrRunning = analyses.filter(a => a.status !== 'completed' && a.status !== 'failed');
+
+  const inferredProvider = sessionProvider || completed[0]?.analysis_provider || 'unknown';
+  const inferredModel = sessionModel || completed[0]?.analysis_model || 'unknown';
 
   const dimAverages: Record<DimensionKey, number | null> = {
     relevance: null,
@@ -313,6 +332,12 @@ export function buildExportModel(session: Session, personasById: Record<string, 
       file_name: session.file_name,
       created_at: session.created_at,
       status: session.status,
+      analysis_provider: inferredProvider,
+      analysis_model: inferredModel,
+    },
+    analysis_backend: {
+      provider: inferredProvider,
+      model: inferredModel,
     },
     stats: {
       personas_total: analyses.length,
@@ -336,6 +361,7 @@ export function exportToMarkdown(model: ExportModel): string {
   lines.push(`- Document: **${model.session.file_name}**`);
   lines.push(`- Session: \`${model.session.id}\``);
   lines.push(`- Session status: **${model.session.status}**`);
+  lines.push(`- Analysis backend: **${model.analysis_backend.provider} / ${model.analysis_backend.model}**`);
   lines.push(`- Exported at: \`${model.exported_at}\``);
   lines.push('');
 
@@ -386,6 +412,13 @@ export function exportToMarkdown(model: ExportModel): string {
     lines.push(`### ${a.persona_name}${a.persona_role ? ` (${a.persona_role})` : ''}`);
     lines.push('');
     lines.push(`- Status: **${a.status}**`);
+    {
+      const provider = (a.analysis_provider || model.analysis_backend.provider || '').trim();
+      const backendModel = (a.analysis_model || model.analysis_backend.model || '').trim();
+      if (provider && backendModel && !(provider === 'unknown' && backendModel === 'unknown')) {
+        lines.push(`- Backend: **${provider} / ${backendModel}**`);
+      }
+    }
     if (a.error_message) {
       lines.push(`- Error: ${a.error_message}`);
     }
@@ -452,6 +485,8 @@ export function exportToCsv(model: ExportModel): string {
     'persona_name',
     'persona_role',
     'analysis_status',
+    'analysis_provider',
+    'analysis_model',
     ...DIMENSIONS.flatMap((d) => [`${d}_score`, `${d}_commentary`]),
     'top_issues_json',
     'what_works_well_json',
@@ -473,6 +508,8 @@ export function exportToCsv(model: ExportModel): string {
       a.persona_name,
       a.persona_role,
       a.status,
+      a.analysis_provider,
+      a.analysis_model,
     ];
 
     for (const dim of DIMENSIONS) {
@@ -594,6 +631,7 @@ export async function exportToPdfBlob(model: ExportModel): Promise<Blob> {
     `Document: ${model.session.file_name}`,
     `Session: ${model.session.id}`,
     `Session status: ${model.session.status}`,
+    `Analysis backend: ${model.analysis_backend.provider} / ${model.analysis_backend.model}`,
     `Exported at: ${model.exported_at}`,
   ], { size: 11 });
   y -= 10;
@@ -649,6 +687,13 @@ export async function exportToPdfBlob(model: ExportModel): Promise<Blob> {
     const heading = `${a.persona_name}${a.persona_role ? ` (${a.persona_role})` : ''}`;
     drawLines([heading], { size: 13, bold: true });
     drawLines([`Status: ${a.status}`], { size: 11 });
+    {
+      const provider = (a.analysis_provider || model.analysis_backend.provider || '').trim();
+      const backendModel = (a.analysis_model || model.analysis_backend.model || '').trim();
+      if (provider && backendModel && !(provider === 'unknown' && backendModel === 'unknown')) {
+        drawLines([`Backend: ${provider} / ${backendModel}`], { size: 11 });
+      }
+    }
     if (a.error_message) {
       drawLines(wrap(`Error: ${a.error_message}`, font, 11, maxWidth), { size: 11 });
     }
@@ -733,6 +778,7 @@ export async function exportToDocxBlob(model: ExportModel): Promise<Blob> {
   p(`Document: ${model.session.file_name}`);
   p(`Session: ${model.session.id}`);
   p(`Session status: ${model.session.status}`);
+  p(`Analysis backend: ${model.analysis_backend.provider} / ${model.analysis_backend.model}`);
   p(`Exported at: ${model.exported_at}`);
   p('');
 
@@ -779,6 +825,13 @@ export async function exportToDocxBlob(model: ExportModel): Promise<Blob> {
   for (const a of model.analyses) {
     h(`${a.persona_name}${a.persona_role ? ` (${a.persona_role})` : ''}`, HeadingLevel.HEADING_2);
     bullet(`Status: ${a.status}`);
+    {
+      const provider = (a.analysis_provider || model.analysis_backend.provider || '').trim();
+      const backendModel = (a.analysis_model || model.analysis_backend.model || '').trim();
+      if (provider && backendModel && !(provider === 'unknown' && backendModel === 'unknown')) {
+        bullet(`Backend: ${provider} / ${backendModel}`);
+      }
+    }
     if (a.error_message) bullet(`Error: ${a.error_message}`);
     p('');
 

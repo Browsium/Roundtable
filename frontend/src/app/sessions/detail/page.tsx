@@ -600,6 +600,14 @@ function SessionDetailContent() {
                   }
                 })()} complete
               </p>
+              {(session.analysis_provider || session.analysis_model) && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Backend:{' '}
+                  <span className="font-mono">
+                    {(session.analysis_provider || 'unknown').trim() || 'unknown'} / {(session.analysis_model || 'unknown').trim() || 'unknown'}
+                  </span>
+                </p>
+              )}
             </div>
           </div>
         </div>

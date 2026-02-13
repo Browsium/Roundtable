@@ -22,6 +22,8 @@ export interface Session {
   file_extension: string;
   selected_persona_ids: string;
   status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
+  analysis_provider?: string;
+  analysis_model?: string;
   error_message?: string;
   created_at: string;
   updated_at: string;
@@ -32,6 +34,8 @@ export interface Analysis {
   session_id: string;
   persona_id: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
+  analysis_provider?: string;
+  analysis_model?: string;
   score_json?: string;
   top_issues_json?: string;
   rewritten_suggestions_json?: string;
@@ -71,6 +75,31 @@ export class D1Client {
 
   constructor(db: D1Database) {
     this.db = db;
+  }
+
+  private async columnExists(table: string, column: string): Promise<boolean> {
+    const result = await this.db.prepare(`PRAGMA table_info('${table}')`).all<{ name: string }>();
+    return (result.results || []).some(r => r.name === column);
+  }
+
+  private async ensureAnalysisBackendColumns(): Promise<void> {
+    const ensureColumn = async (table: 'sessions' | 'analyses', column: 'analysis_provider' | 'analysis_model') => {
+      const exists = await this.columnExists(table, column);
+      if (exists) return;
+      try {
+        await this.db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`).run();
+      } catch (e) {
+        const msg = String(e);
+        // Another request may have added the column concurrently.
+        if (msg.toLowerCase().includes('duplicate column')) return;
+        throw e;
+      }
+    };
+
+    await ensureColumn('sessions', 'analysis_provider');
+    await ensureColumn('sessions', 'analysis_model');
+    await ensureColumn('analyses', 'analysis_provider');
+    await ensureColumn('analyses', 'analysis_model');
   }
 
   private async ensureSessionSharesSchema(): Promise<void> {
@@ -226,6 +255,10 @@ export class D1Client {
     const now = new Date().toISOString();
     const fields = Object.keys(updates).filter(k => k !== 'id');
     if (fields.length === 0) return;
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'analysis_provider') || Object.prototype.hasOwnProperty.call(updates, 'analysis_model')) {
+      await this.ensureAnalysisBackendColumns();
+    }
     
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => (updates as any)[f]);
@@ -268,6 +301,10 @@ export class D1Client {
   async updateAnalysis(id: number, updates: Partial<Analysis>): Promise<void> {
     const fields = Object.keys(updates).filter(k => k !== 'id');
     if (fields.length === 0) return;
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'analysis_provider') || Object.prototype.hasOwnProperty.call(updates, 'analysis_model')) {
+      await this.ensureAnalysisBackendColumns();
+    }
     
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => (updates as any)[f]);

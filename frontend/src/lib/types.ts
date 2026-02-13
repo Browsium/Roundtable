@@ -21,6 +21,8 @@ export interface Session {
   file_extension?: string;
   selected_persona_ids: string | string[];
   status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
+  analysis_provider?: string;
+  analysis_model?: string;
   is_owner?: boolean;
   is_shared?: boolean;
   share_with_emails?: string[];
@@ -40,6 +42,8 @@ export interface Analysis {
   persona_id: string;
   persona_name?: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
+  analysis_provider?: string;
+  analysis_model?: string;
   score_json?: any;
   top_issues_json?: any;
   rewritten_suggestions_json?: any;

@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   file_extension TEXT NOT NULL,
   selected_persona_ids TEXT NOT NULL,
   status TEXT DEFAULT 'uploaded',
+  analysis_provider TEXT,
+  analysis_model TEXT,
   error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -38,6 +40,8 @@ CREATE TABLE IF NOT EXISTS analyses (
   session_id TEXT NOT NULL,
   persona_id TEXT NOT NULL,
   status TEXT DEFAULT 'pending',
+  analysis_provider TEXT,
+  analysis_model TEXT,
   score_json TEXT,
   top_issues_json TEXT,
   rewritten_suggestions_json TEXT,
@@ -90,4 +94,3 @@ CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_
 CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON share_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_expires ON share_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_session ON share_tokens(session_id);
-
