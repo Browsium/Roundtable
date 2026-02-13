@@ -9,73 +9,102 @@
   width: 100%;
   height: 100%;
   transform-origin: 50% 50%;
-  animation: hg-flip 1.8s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  animation: hg-flip 2.6s infinite linear;
 }
 
 .sandTop {
   transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: hg-sand-top 1.8s infinite linear;
+  transform-origin: 50% 50%;
+  opacity: 0.5;
+  animation: hg-sand-top 2.6s infinite linear;
 }
 
 .sandBottom {
   transform-box: fill-box;
-  transform-origin: 50% 0%;
-  animation: hg-sand-bottom 1.8s infinite linear;
+  transform-origin: 50% 50%;
+  opacity: 0.2;
+  animation: hg-sand-bottom 2.6s infinite linear;
 }
 
 .stream {
   transform-origin: 50% 50%;
-  animation: hg-stream 1.8s infinite linear;
+  animation: hg-stream 2.6s infinite linear;
 }
 
 @keyframes hg-sand-top {
   0% {
-    transform: scaleY(1);
-    opacity: 0.45;
+    transform: translateY(0px);
+    opacity: 0.5;
   }
-  70% {
-    transform: scaleY(0.12);
-    opacity: 0.25;
+  45% {
+    transform: translateY(3.8px);
+    opacity: 0.22;
   }
-  85%,
+  50% {
+    transform: translateY(3.8px);
+    opacity: 0.22;
+  }
+  95% {
+    transform: translateY(0px);
+    opacity: 0.5;
+  }
   100% {
-    transform: scaleY(0.05);
-    opacity: 0.18;
+    transform: translateY(0px);
+    opacity: 0.5;
   }
 }
 
 @keyframes hg-sand-bottom {
-  0%,
-  10% {
-    transform: scaleY(0.05);
-    opacity: 0.18;
+  0% {
+    transform: translateY(3.8px);
+    opacity: 0.22;
   }
-  80% {
-    transform: scaleY(1);
-    opacity: 0.45;
+  45% {
+    transform: translateY(0px);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(0px);
+    opacity: 0.5;
+  }
+  95% {
+    transform: translateY(3.8px);
+    opacity: 0.22;
   }
   100% {
-    transform: scaleY(1);
-    opacity: 0.45;
+    transform: translateY(3.8px);
+    opacity: 0.22;
   }
 }
 
 @keyframes hg-stream {
   0%,
-  12% {
+  10% {
     opacity: 0;
     transform: scaleY(0.6);
   }
-  20% {
+  15% {
     opacity: 0.35;
     transform: scaleY(1);
   }
-  78% {
+  45% {
     opacity: 0.35;
     transform: scaleY(1);
   }
-  88%,
+  48%,
+  52% {
+    opacity: 0;
+    transform: scaleY(0.6);
+  }
+  60% {
+    opacity: 0.35;
+    transform: scaleY(1);
+  }
+  95% {
+    opacity: 0.35;
+    transform: scaleY(1);
+  }
+  98%,
   100% {
     opacity: 0;
     transform: scaleY(0.6);
@@ -84,11 +113,15 @@
 
 @keyframes hg-flip {
   0%,
-  85% {
+  45% {
     transform: rotate(0deg);
   }
-  100% {
+  50%,
+  95% {
     transform: rotate(180deg);
+  }
+  100% {
+    transform: rotate(360deg);
   }
 }
 
@@ -100,4 +133,3 @@
     animation: none !important;
   }
 }
-

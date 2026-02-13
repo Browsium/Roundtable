@@ -20,6 +20,7 @@ import {
 import { sessionApi, personaApi, AnalysisWebSocket } from '@/lib/api';
 import type { Session, Analysis, Persona } from '@/lib/types';
 import HourglassSpinner from '@/components/HourglassSpinner';
+import ScannerBar from '@/components/ScannerBar';
 
 function SessionDetailContent() {
   const searchParams = useSearchParams();
@@ -148,7 +149,7 @@ function SessionDetailContent() {
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'running':
-        return <HourglassSpinner className="h-5 w-5 text-blue-500" />;
+        return null;
       default:
         return <Clock className="h-5 w-5 text-gray-400" />;
     }
@@ -295,50 +296,59 @@ function SessionDetailContent() {
           >
             {/* Analysis Header */}
             <div
-              className="p-6 flex items-start justify-between cursor-pointer hover:bg-gray-50"
+              className="p-6 cursor-pointer hover:bg-gray-50"
               onClick={() => setExpandedAnalysis(expandedAnalysis === analysis.id ? null : analysis.id)}
             >
-              <div className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                  <User className="h-5 w-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {getPersonaName(analysis.persona_id)}
-                  </h3>
-                  <p className="text-sm text-gray-600">{getPersonaRole(analysis.persona_id)}</p>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {analysis.status === 'completed' && `Overall Score: ${calculateOverallScore(analysis)}/10`}
-                    {analysis.status === 'failed' && 'Analysis failed'}
-                    {analysis.status === 'running' && 'Analyzing...'}
-                    {analysis.status === 'pending' && 'Waiting to start...'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {getStatusIcon(analysis.status)}
-                {analysis.status === 'failed' && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleRetry(analysis.persona_id, analysis.id);
-                    }}
-                    disabled={retryingId === analysis.id}
-                    className="ml-2 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200"
-                  >
-                    {retryingId === analysis.id ? (
-                      <RefreshCw className="h-4 w-4 animate-spin mr-1" />
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <User className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {getPersonaName(analysis.persona_id)}
+                    </h3>
+                    <p className="text-sm text-gray-600">{getPersonaRole(analysis.persona_id)}</p>
+
+                    {analysis.status === 'running' ? (
+                      <div className="mt-3">
+                        <ScannerBar className="text-red-600" title="Analyzing" />
+                      </div>
                     ) : (
-                      <RefreshCw className="h-4 w-4 mr-1" />
+                      <p className="text-sm text-gray-500 mt-1">
+                        {analysis.status === 'completed' && `Overall Score: ${calculateOverallScore(analysis)}/10`}
+                        {analysis.status === 'failed' && 'Analysis failed'}
+                        {analysis.status === 'pending' && 'Waiting to start...'}
+                      </p>
                     )}
-                    Retry
-                  </button>
-                )}
-                {expandedAnalysis === analysis.id ? (
-                  <ChevronUp className="h-5 w-5 text-gray-400" />
-                ) : (
-                  <ChevronDown className="h-5 w-5 text-gray-400" />
-                )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {getStatusIcon(analysis.status)}
+                  {analysis.status === 'failed' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRetry(analysis.persona_id, analysis.id);
+                      }}
+                      disabled={retryingId === analysis.id}
+                      className="ml-2 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200"
+                    >
+                      {retryingId === analysis.id ? (
+                        <RefreshCw className="h-4 w-4 animate-spin mr-1" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4 mr-1" />
+                      )}
+                      Retry
+                    </button>
+                  )}
+                  {expandedAnalysis === analysis.id ? (
+                    <ChevronUp className="h-5 w-5 text-gray-400" />
+                  ) : (
+                    <ChevronDown className="h-5 w-5 text-gray-400" />
+                  )}
+                </div>
               </div>
             </div>
 

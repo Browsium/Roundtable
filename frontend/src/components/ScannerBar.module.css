@@ -1,0 +1,43 @@
+.track {
+  position: relative;
+  height: 10px;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: rgba(17, 24, 39, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+.eye {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 35%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    currentColor 35%,
+    currentColor 55%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  opacity: 0.9;
+  filter: drop-shadow(0 0 6px currentColor);
+  animation: scan 1.25s infinite alternate ease-in-out;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateX(-35%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eye {
+    animation: none !important;
+    transform: translateX(82%);
+  }
+}
+

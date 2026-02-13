@@ -348,50 +348,99 @@ export class SessionAnalyzer {
       const reader = isSse ? response.body?.getReader() : undefined;
       console.log(`Stream reader available for persona ${persona.id}: ${!!reader} (content-type: ${contentType || 'unknown'})`);
 
+      // Guard against CLIBridge streams that never close (or stall mid-stream).
+      const STREAM_IDLE_TIMEOUT_MS = 30_000;
+      const STREAM_TOTAL_TIMEOUT_MS = 180_000;
+
+      let streamTimedOut = false;
+
       if (reader) {
         const decoder = new TextDecoder();
         let buffer = '';
+        let receivedDoneEvent = false;
+        const streamStartedAt = Date.now();
+        let lastActivityAt = streamStartedAt;
+
+        const readWithTimeout = async (timeoutMs: number) => {
+          return await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              reject(new Error(`CLIBridge stream timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            reader.read().then(
+              (res) => {
+                clearTimeout(timer);
+                resolve(res);
+              },
+              (err) => {
+                clearTimeout(timer);
+                reject(err);
+              }
+            );
+          });
+        };
 
         const handleEventData = (data: string) => {
           const trimmed = data.trim();
-          if (!trimmed || trimmed === '[DONE]') return;
+          if (!trimmed) return;
+          if (trimmed === '[DONE]') {
+            receivedDoneEvent = true;
+            return;
+          }
 
+          let jsonData: any;
           try {
-            const jsonData: any = JSON.parse(trimmed);
-            if (jsonData.type === 'chunk' && typeof jsonData.text === 'string') {
-              fullResponse += jsonData.text;
-              if (jsonData.text.length > 0) {
-                sendMessage({
-                  type: 'chunk',
-                  persona_id: persona.id,
-                  text: jsonData.text,
-                });
-              }
-              return;
-            }
-
-            if (jsonData.type === 'done') {
-              const doneText = typeof jsonData.response === 'string'
-                ? jsonData.response
-                : (typeof jsonData.text === 'string' ? jsonData.text : '');
-              if (doneText) {
-                fullResponse += doneText;
-              }
-              return;
-            }
-
-            if (jsonData.type === 'error') {
-              const err = typeof jsonData.error === 'string' ? jsonData.error : 'CLIBridge returned an error event';
-              throw new Error(err);
-            }
-          } catch (parseError) {
+            jsonData = JSON.parse(trimmed);
+          } catch (_parseError) {
             console.warn(`Failed to parse CLIBridge SSE data for persona ${persona.id}:`, trimmed.substring(0, 200));
+            return;
+          }
+
+          if (jsonData.type === 'chunk') {
+            const chunkText = typeof jsonData.text === 'string'
+              ? jsonData.text
+              : (typeof jsonData.response === 'string' ? jsonData.response : '');
+            if (chunkText) {
+              fullResponse += chunkText;
+              sendMessage({
+                type: 'chunk',
+                persona_id: persona.id,
+                text: chunkText,
+              });
+            }
+            return;
+          }
+
+          if (jsonData.type === 'done') {
+            const doneText = typeof jsonData.response === 'string'
+              ? jsonData.response
+              : (typeof jsonData.text === 'string' ? jsonData.text : '');
+            if (doneText) {
+              fullResponse += doneText;
+            }
+            receivedDoneEvent = true;
+            return;
+          }
+
+          if (jsonData.type === 'error') {
+            const err = typeof jsonData.error === 'string' ? jsonData.error : 'CLIBridge returned an error event';
+            throw new Error(err);
           }
         };
 
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const now = Date.now();
+            const totalRemaining = STREAM_TOTAL_TIMEOUT_MS - (now - streamStartedAt);
+            const idleRemaining = STREAM_IDLE_TIMEOUT_MS - (now - lastActivityAt);
+            const timeoutMs = Math.min(totalRemaining, idleRemaining);
+
+            if (timeoutMs <= 0) {
+              streamTimedOut = true;
+              break;
+            }
+
+            const { done, value } = await readWithTimeout(timeoutMs);
 
             if (done) {
               break;
@@ -401,6 +450,7 @@ export class SessionAnalyzer {
               continue;
             }
 
+            lastActivityAt = Date.now();
             receivedAnyBytes = true;
             chunkCount++;
             buffer += decoder.decode(value, { stream: true });
@@ -419,14 +469,19 @@ export class SessionAnalyzer {
                 if (payload.startsWith(' ')) payload = payload.slice(1);
                 sseEventCount++;
                 handleEventData(payload);
+                if (receivedDoneEvent) break;
               }
 
               newlineIndex = buffer.indexOf('\n');
             }
+
+            if (receivedDoneEvent) {
+              break;
+            }
           }
 
           // Process any remaining buffered data.
-          if (buffer.length > 0) {
+          if (!receivedDoneEvent && buffer.length > 0) {
             let line = buffer;
             if (line.endsWith('\r')) line = line.slice(0, -1);
             if (line.startsWith('data:')) {
@@ -438,6 +493,10 @@ export class SessionAnalyzer {
           }
         } catch (streamError) {
           console.error(`Streaming failed for persona ${persona.id}:`, streamError);
+          const msg = streamError instanceof Error ? streamError.message : String(streamError);
+          if (msg.toLowerCase().includes('timed out') || msg.toLowerCase().includes('timeout')) {
+            streamTimedOut = true;
+          }
         } finally {
           try {
             await reader.cancel();
@@ -457,8 +516,8 @@ export class SessionAnalyzer {
       console.log(`CLIBridge response stats for persona ${persona.id}: chunks=${chunkCount}, sseEvents=${sseEventCount}, receivedAnyBytes=${receivedAnyBytes}, responseChars=${fullResponse.length}`);
 
       // Fallback: if streaming produced nothing usable, try /v1/complete.
-      if (fullResponse.trim().length === 0) {
-        console.warn(`No usable streaming response from CLIBridge for persona ${persona.id}; falling back to complete endpoint`);
+      if (streamTimedOut || fullResponse.trim().length === 0) {
+        console.warn(`No usable streaming response from CLIBridge for persona ${persona.id}${streamTimedOut ? ' (stream timeout)' : ''}; falling back to complete endpoint`);
         const completeResponse = await clibridge.completeAnalysis(analysisRequest);
 
         if (!completeResponse.ok) {
