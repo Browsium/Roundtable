@@ -173,6 +173,7 @@ export class SessionAnalyzer {
       userFriendlyError = 'System is processing too many requests simultaneously. Please try again with fewer personas selected.';
     }
     
+    console.log('Sending session error message:', userFriendlyError);
     sendMessage({
       type: 'error',
       error: userFriendlyError,
@@ -254,7 +255,7 @@ export class SessionAnalyzer {
           while (true) {
             const { done, value } = await reader.read();
             if (done) {
-              console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}`);
+              console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}, response length: ${fullResponse.length}`);
               streamingSuccess = true;
               break;
             }
@@ -292,14 +293,17 @@ export class SessionAnalyzer {
       }
 
       // Parse final result
+      console.log(`Parsing result for persona ${persona.id}, response length: ${fullResponse.length}`);
       let result;
       try {
         // Try to extract JSON from the response
         const jsonMatch = fullResponse.match(/```json\n([\s\S]*?)\n```/);
         if (jsonMatch) {
           result = JSON.parse(jsonMatch[1]);
+          console.log(`Parsed JSON result for persona ${persona.id}`);
         } else {
           result = JSON.parse(fullResponse);
+          console.log(`Parsed direct JSON result for persona ${persona.id}`);
         }
       } catch (parseError) {
         // If parsing fails, treat the whole response as the verdict
@@ -318,6 +322,7 @@ export class SessionAnalyzer {
 
       // Only send complete message if we have a valid result
       if (result) {
+        console.log(`Sending complete message for persona ${persona.id}`);
         // Send complete message
         sendMessage({
           type: 'complete',
@@ -327,6 +332,7 @@ export class SessionAnalyzer {
 
         // Save to D1
         if (analysis) {
+          console.log(`Saving analysis to D1 for persona ${persona.id}`);
           await db.updateAnalysis(analysis.id, {
             status: 'completed',
             score_json: JSON.stringify(result.dimension_scores || {}),
@@ -338,10 +344,12 @@ export class SessionAnalyzer {
             }),
             completed_at: new Date().toISOString(),
           });
+          console.log(`Successfully saved analysis to D1 for persona ${persona.id}`);
         }
       }
 
     } catch (error) {
+      console.error(`Error processing persona ${persona.id}:`, error);
       const errorString = String(error);
       let userFriendlyError = errorString;
       
@@ -350,6 +358,7 @@ export class SessionAnalyzer {
         userFriendlyError = 'System is busy processing requests. Please try again.';
       }
       
+      console.log(`Sending error message for persona ${persona.id}:`, userFriendlyError);
       sendMessage({
         type: 'error',
         persona_id: persona.id,
