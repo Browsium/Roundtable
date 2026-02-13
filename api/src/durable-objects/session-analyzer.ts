@@ -145,12 +145,15 @@ export class SessionAnalyzer {
         return;
       }
 
-      // Start analyses concurrently
-      const analysisPromises = personas.map(persona =>
-        this.analyzePersona(sessionId, persona, documentText, sendMessage, db)
-      );
-
-      await Promise.all(analysisPromises);
+      // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
+      const maxConcurrency = 3; // Limit to 3 concurrent analyses
+      for (let i = 0; i < personas.length; i += maxConcurrency) {
+        const batch = personas.slice(i, i + maxConcurrency);
+        const analysisPromises = batch.map(persona =>
+          this.analyzePersona(sessionId, persona, documentText, sendMessage, db)
+        );
+        await Promise.all(analysisPromises);
+      }
 
       // All complete
       sendMessage({
@@ -163,9 +166,16 @@ export class SessionAnalyzer {
   } catch (error) {
     const errorMessage = String(error);
     console.error('Analysis failed:', errorMessage);
+    
+    // Provide more context for common errors
+    let userFriendlyError = errorMessage;
+    if (errorMessage.includes('Too many subrequests')) {
+      userFriendlyError = 'System is processing too many requests simultaneously. Please try again with fewer personas selected.';
+    }
+    
     sendMessage({
       type: 'error',
-      error: errorMessage,
+      error: userFriendlyError,
     });
     await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage });
     
@@ -286,10 +296,18 @@ export class SessionAnalyzer {
       }
 
     } catch (error) {
+      const errorString = String(error);
+      let userFriendlyError = errorString;
+      
+      // Provide more context for common errors
+      if (errorString.includes('Too many subrequests')) {
+        userFriendlyError = 'System is busy processing requests. Please try again.';
+      }
+      
       sendMessage({
         type: 'error',
         persona_id: persona.id,
-        error: String(error),
+        error: userFriendlyError,
       });
       
       const analyses = await db.getAnalyses(sessionId);
