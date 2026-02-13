@@ -220,6 +220,7 @@ export class SessionAnalyzer {
       });
 
       // Call CLIBridge streaming endpoint
+      console.log(`Calling CLIBridge for persona ${persona.id}`);
       const response = await clibridge.streamAnalysis({
         provider: 'claude',
         model: 'sonnet',
@@ -228,22 +229,35 @@ export class SessionAnalyzer {
           { role: 'user', content: documentText },
         ],
       });
+      console.log(`CLIBridge response for persona ${persona.id}:`, { status: response.status, statusText: response.statusText });
 
       // Check if response is OK before streaming
       if (!response.ok) {
-        throw new Error(`CLIBridge returned ${response.status}: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error(`CLIBridge returned non-OK response for persona ${persona.id}:`, { 
+          status: response.status, 
+          statusText: response.statusText,
+          errorText: errorText.substring(0, 500)
+        });
+        throw new Error(`CLIBridge returned ${response.status}: ${response.statusText} - ${errorText.substring(0, 200)}`);
       }
 
       // Stream chunks
+      console.log(`Starting to stream response for persona ${persona.id}`);
       let fullResponse = '';
       const reader = response.body?.getReader();
 
       if (reader) {
         try {
+          let chunkCount = 0;
           while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+              console.log(`Finished streaming for persona ${persona.id}, chunk count: ${chunkCount}`);
+              break;
+            }
 
+            chunkCount++;
             const chunk = new TextDecoder().decode(value);
             fullResponse += chunk;
 
@@ -254,6 +268,20 @@ export class SessionAnalyzer {
               text: chunk,
             });
           }
+        } catch (streamError) {
+          console.error(`Streaming failed for persona ${persona.id}:`, streamError);
+          throw new Error(`Streaming failed: ${streamError}`);
+        } finally {
+          try {
+            await reader.cancel();
+          } catch (cancelError) {
+            console.error(`Failed to cancel reader for persona ${persona.id}:`, cancelError);
+          }
+        }
+      } else {
+        console.warn(`No readable stream for persona ${persona.id}`);
+      }
+      console.log(`Full response length for persona ${persona.id}: ${fullResponse.length}`);
         } catch (streamError) {
           console.error(`Streaming failed for persona ${persona.id}:`, streamError);
           throw new Error(`Streaming failed: ${streamError}`);

@@ -51,12 +51,23 @@ export class CLIBridgeClient {
       messages: request.messages,
     });
 
+    // Log the request for debugging (remove in production)
+    console.log('CLIBridge streamAnalysis request:', { 
+      url, 
+      headers: {
+        'CF-Access-Client-Id': headers['CF-Access-Client-Id'] ? '[REDACTED]' : undefined,
+        'CF-Access-Client-Secret': headers['CF-Access-Client-Secret'] ? '[REDACTED]' : undefined,
+        'X-API-Key': headers['X-API-Key'] ? '[REDACTED]' : undefined,
+        'Content-Type': headers['Content-Type']
+      }, 
+      bodyPreview: body.substring(0, 200) + '...' 
+    });
+
     // Retry logic for transient failures
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        // Log the request for debugging (remove in production)
-        console.log(`CLIBridge request (attempt ${attempt}):`, { url, headers, body: body.substring(0, 200) + '...' });
+        console.log(`CLIBridge streamAnalysis attempt ${attempt}`);
 
         const response = await fetch(url, {
           method: 'POST',
@@ -64,7 +75,14 @@ export class CLIBridgeClient {
           body,
         });
 
+        console.log(`CLIBridge streamAnalysis response attempt ${attempt}:`, { 
+          status: response.status, 
+          statusText: response.statusText,
+          headers: [...response.headers.entries()]
+        });
+
         if (response.ok) {
+          console.log(`CLIBridge streamAnalysis successful attempt ${attempt}`);
           return response;
         }
 
@@ -76,12 +94,15 @@ export class CLIBridgeClient {
         
         // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
         if (response.status < 500 && response.status >= 400) {
+          console.log(`CLIBridge streamAnalysis breaking retry loop on client error ${response.status}`);
           break;
         }
         
         // Wait before retrying (exponential backoff)
         if (attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`CLIBridge streamAnalysis waiting ${delay}ms before retry ${attempt + 1}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       } catch (error) {
         console.error(`CLIBridge network error (attempt ${attempt}):`, error);
@@ -89,11 +110,14 @@ export class CLIBridgeClient {
         
         // Wait before retrying
         if (attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`CLIBridge streamAnalysis waiting ${delay}ms before retry ${attempt + 1} after network error`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
+    console.error('CLIBridge streamAnalysis failed after all retries:', lastError);
     throw lastError || new Error('CLIBridge stream failed after 3 attempts');
   }
 
