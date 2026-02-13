@@ -227,6 +227,8 @@ export class SessionAnalyzer {
     db: D1Client
   ): Promise<void> {
     console.log(`Starting analyzePersona for ${persona.id} in session ${sessionId}`);
+    console.log(`Document text length: ${documentText.length}`);
+    console.log(`First 100 chars of document: ${documentText.substring(0, 100)}`);
     
     try {
       // Get existing analysis or create new one
@@ -275,6 +277,7 @@ export class SessionAnalyzer {
       console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
       console.log(`First 200 chars of system prompt: ${systemPrompt.substring(0, 200)}`);
       
+      console.log(`CLIBridge client initialized, about to call streamAnalysis`);
       const response = await clibridge.streamAnalysis({
         provider: 'claude',
         model: 'sonnet',
@@ -282,6 +285,12 @@ export class SessionAnalyzer {
         messages: [
           { role: 'user', content: documentText },
         ],
+      });
+      console.log(`CLIBridge streamAnalysis returned for persona ${persona.id}:`, { 
+        status: response.status, 
+        statusText: response.statusText,
+        contentType: response.headers.get('content-type'),
+        hasBody: !!response.body
       });
       console.log(`CLIBridge response for persona ${persona.id}:`, { status: response.status, statusText: response.statusText, contentType: response.headers.get('content-type') });
       console.log(`CLIBridge response for persona ${persona.id}:`, { status: response.status, statusText: response.statusText });
@@ -301,22 +310,27 @@ export class SessionAnalyzer {
       console.log(`Starting to stream response for persona ${persona.id}`);
       let fullResponse = '';
       const reader = response.body?.getReader();
-      let streamingCompleted = false;
       let chunkCount = 0;
+      let receivedAnyData = false;
+
+      console.log(`Stream reader available for persona ${persona.id}: ${!!reader}`);
 
       if (reader) {
         try {
           while (true) {
+            console.log(`Attempting to read chunk ${chunkCount + 1} for persona ${persona.id}`);
             const { done, value } = await reader.read();
+            console.log(`Read result for persona ${persona.id}: done=${done}, value=${!!value}, valueLength=${value?.byteLength || 0}`);
+            
             if (done) {
               console.log(`Stream completed normally for persona ${persona.id}, chunks: ${chunkCount}, response length: ${fullResponse.length}`);
-              streamingCompleted = true;
               break;
             }
 
+            receivedAnyData = true;
             chunkCount++;
             const chunk = new TextDecoder().decode(value);
-            console.log(`Received chunk ${chunkCount} for persona ${persona.id} (${chunk.length} bytes)`);
+            console.log(`Received chunk ${chunkCount} for persona ${persona.id} (${chunk.length} bytes):`, chunk.substring(0, 100));
             
             // Process SSE format directly
             const lines = chunk.split('\n');
@@ -348,7 +362,6 @@ export class SessionAnalyzer {
           console.error(`Streaming failed for persona ${persona.id}:`, streamError);
           // Even if streaming failed, we might have partial content
           console.log(`Streaming failed but had content length: ${fullResponse.length} for persona ${persona.id}`);
-          // Continue with whatever content we have
         } finally {
           try {
             await reader.cancel();
@@ -361,11 +374,11 @@ export class SessionAnalyzer {
         console.warn(`No readable stream for persona ${persona.id}`);
       }
       
-      console.log(`Final response stats for persona ${persona.id}: chunks=${chunkCount}, length=${fullResponse.length}, completed=${streamingCompleted}`);
+      console.log(`Final response stats for persona ${persona.id}: chunks=${chunkCount}, length=${fullResponse.length}, receivedAnyData=${receivedAnyData}`);
       
-      // Always attempt to parse what we have, even if streaming didn't complete normally
-      if (fullResponse.length === 0) {
-        console.warn(`No response data received for persona ${persona.id}`);
+      // Always attempt to parse what we have, but check if we got anything
+      if (!receivedAnyData || fullResponse.length === 0) {
+        console.warn(`No response data received for persona ${persona.id} - chunks: ${chunkCount}, receivedAnyData: ${receivedAnyData}`);
         throw new Error('No response data received from CLIBridge');
       }
       console.log(`Final full response length for persona ${persona.id}: ${fullResponse.length}`);
