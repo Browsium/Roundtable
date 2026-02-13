@@ -21,6 +21,16 @@ import { sessionApi, personaApi, AnalysisWebSocket } from '@/lib/api';
 import type { Session, Analysis, Persona } from '@/lib/types';
 import HourglassSpinner from '@/components/HourglassSpinner';
 import ScannerBar from '@/components/ScannerBar';
+import {
+  buildExportModel,
+  downloadBlob,
+  exportToCsv,
+  exportToDocxBlob,
+  exportToMarkdown,
+  exportToPdfBlob,
+  makeExportFilename,
+  type ExportFormat,
+} from '@/lib/export';
 
 function SessionDetailContent() {
   const searchParams = useSearchParams();
@@ -40,6 +50,10 @@ function SessionDetailContent() {
   const [shareInput, setShareInput] = useState('');
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Load personas to get names
   const loadPersonas = useCallback(async () => {
@@ -194,42 +208,43 @@ function SessionDetailContent() {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = () => {
+    setExportError(null);
+    setExportOpen(true);
+  };
+
+  const handleExportDownload = async () => {
     try {
       if (!session) return;
+      setExportError(null);
+      setExporting(true);
 
-      const enrichedAnalyses = (session.analyses || []).map(a => ({
-        ...a,
-        persona_name: getPersonaName(a.persona_id),
-        persona_role: getPersonaRole(a.persona_id),
-      }));
+      const model = buildExportModel(session, personas);
+      const filename = makeExportFilename(session.file_name, exportFormat);
 
-      const exportPayload = {
-        exported_at: new Date().toISOString(),
-        session: {
-          ...session,
-          analyses: enrichedAnalyses,
-        },
-      };
-
-      const safeBase = (session.file_name || 'roundtable')
-        .replace(/[^a-z0-9._-]+/gi, '_')
-        .replace(/^_+|_+$/g, '');
-      const filename = `${safeBase || 'roundtable'}.roundtable.json`;
-
-      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (exportFormat === 'md') {
+        const md = exportToMarkdown(model);
+        downloadBlob(new Blob([md], { type: 'text/markdown; charset=utf-8' }), filename);
+      } else if (exportFormat === 'csv') {
+        const csv = exportToCsv(model);
+        downloadBlob(new Blob([csv], { type: 'text/csv; charset=utf-8' }), filename);
+      } else if (exportFormat === 'pdf') {
+        const pdfBlob = await exportToPdfBlob(model);
+        downloadBlob(pdfBlob, filename);
+      } else if (exportFormat === 'docx') {
+        const docxBlob = await exportToDocxBlob(model);
+        downloadBlob(docxBlob, filename);
+      } else {
+        setExportError('Unsupported export format');
+        return;
+      }
 
       showNotice('Export downloaded');
+      setExportOpen(false);
     } catch (e: any) {
-      setError(e?.message || 'Failed to export session');
+      setExportError(e?.message || 'Failed to export session');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -428,6 +443,119 @@ function SessionDetailContent() {
                   className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-50"
                 >
                   {sharing ? 'Sharing...' : 'Share'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Export Modal */}
+        {exportOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+            onClick={() => {
+              if (!exporting) setExportOpen(false);
+            }}
+          >
+            <div
+              className="w-full max-w-lg rounded-lg bg-white border shadow-lg p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Export Results</h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Includes an executive summary (common themes and recommendations) and full persona-by-persona details.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setExportOpen(false)}
+                  disabled={exporting}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                  aria-label="Close"
+                  title="Close"
+                >
+                  <span className="text-xl leading-none">×</span>
+                </button>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-700 mb-2">Format</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat('pdf')}
+                      className={`p-3 border rounded-md text-left ${
+                        exportFormat === 'pdf'
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="font-medium text-gray-900">PDF</div>
+                      <div className="text-xs text-gray-600 mt-0.5">Printable report</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat('docx')}
+                      className={`p-3 border rounded-md text-left ${
+                        exportFormat === 'docx'
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="font-medium text-gray-900">DOCX</div>
+                      <div className="text-xs text-gray-600 mt-0.5">Editable document</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat('csv')}
+                      className={`p-3 border rounded-md text-left ${
+                        exportFormat === 'csv'
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="font-medium text-gray-900">CSV</div>
+                      <div className="text-xs text-gray-600 mt-0.5">Spreadsheet-friendly</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat('md')}
+                      className={`p-3 border rounded-md text-left ${
+                        exportFormat === 'md'
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="font-medium text-gray-900">Markdown</div>
+                      <div className="text-xs text-gray-600 mt-0.5">Portable text</div>
+                    </button>
+                  </div>
+                </div>
+
+                {exportError && (
+                  <div className="flex items-center gap-2 text-red-600 text-sm">
+                    <AlertCircle className="h-4 w-4" />
+                    {exportError}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setExportOpen(false)}
+                  disabled={exporting}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleExportDownload}
+                  disabled={exporting}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-md hover:bg-gray-800 font-medium disabled:opacity-50"
+                >
+                  {exporting ? 'Exporting...' : 'Download'}
                 </button>
               </div>
             </div>
