@@ -79,12 +79,15 @@ export class SessionAnalyzer {
     const db = new D1Client(this.env.DB);
 
     const sendMessage = (msg: any) => {
-      if (ws && ws.readyState === 1) { // WebSocket.OPEN
+      // Send to specific WebSocket if provided and open
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
+        return;
       }
-      // Also broadcast to all connected websockets
+      
+      // Otherwise broadcast to all connected websockets (excluding the specific one if it exists)
       this.websockets.forEach(socket => {
-        if (socket.readyState === 1) {
+        if (socket !== ws && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify(msg));
         }
       });
@@ -118,7 +121,7 @@ export class SessionAnalyzer {
 
       // Extract text
       const fileBuffer = await r2Object.arrayBuffer();
-      const documentText = await extractTextFromDocument(
+      const { text: documentText } = await extractTextFromDocument(
         fileBuffer,
         session.file_extension
       );
