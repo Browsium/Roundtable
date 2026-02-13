@@ -50,6 +50,12 @@ export interface ShareToken {
   created_at: string;
 }
 
+export interface SessionShare {
+  session_id: string;
+  email: string;
+  created_at: string;
+}
+
 export interface Setting {
   key: string;
   value: string;
@@ -65,6 +71,32 @@ export class D1Client {
 
   constructor(db: D1Database) {
     this.db = db;
+  }
+
+  private async ensureSessionSharesSchema(): Promise<void> {
+    // Idempotent; safe to call from request paths.
+    await this.db.prepare(
+      `CREATE TABLE IF NOT EXISTS session_shares (
+        session_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, email),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )`
+    ).run();
+
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_email ON session_shares(email)').run();
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id)').run();
+  }
+
+  private async ensureSettingsSchema(): Promise<void> {
+    await this.db.prepare(
+      `CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`
+    ).run();
   }
 
   // Persona operations
@@ -115,14 +147,60 @@ export class D1Client {
   }
 
   // Session operations
-  async getSessions(userEmail: string): Promise<Session[]> {
-    const result = await this.db.prepare('SELECT * FROM sessions WHERE user_email = ? ORDER BY created_at DESC').bind(userEmail).all<Session>();
+  async getSessions(userEmail: string, includeShared: boolean = true): Promise<Session[]> {
+    if (includeShared) {
+      await this.ensureSessionSharesSchema();
+      const result = await this.db.prepare(
+        `SELECT DISTINCT s.*
+         FROM sessions s
+         LEFT JOIN session_shares sh ON sh.session_id = s.id
+         WHERE s.user_email = ? OR sh.email = ?
+         ORDER BY s.created_at DESC`
+      ).bind(userEmail, userEmail).all<Session>();
+      return result.results || [];
+    }
+
+    const result = await this.db.prepare(
+      'SELECT * FROM sessions WHERE user_email = ? ORDER BY created_at DESC'
+    ).bind(userEmail).all<Session>();
     return result.results || [];
   }
 
   async getSession(id: string): Promise<Session | null> {
     const result = await this.db.prepare('SELECT * FROM sessions WHERE id = ?').bind(id).first<Session>();
     return result || null;
+  }
+
+  async isSessionSharedWith(sessionId: string, email: string): Promise<boolean> {
+    await this.ensureSessionSharesSchema();
+    const row = await this.db.prepare(
+      'SELECT 1 as ok FROM session_shares WHERE session_id = ? AND email = ? LIMIT 1'
+    ).bind(sessionId, email).first<{ ok: number }>();
+    return !!row;
+  }
+
+  async getSessionShareEmails(sessionId: string): Promise<string[]> {
+    await this.ensureSessionSharesSchema();
+    const result = await this.db.prepare(
+      'SELECT email FROM session_shares WHERE session_id = ? ORDER BY email'
+    ).bind(sessionId).all<{ email: string }>();
+    return (result.results || []).map(r => r.email);
+  }
+
+  async addSessionShares(sessionId: string, emails: string[]): Promise<void> {
+    await this.ensureSessionSharesSchema();
+    const now = new Date().toISOString();
+    for (const email of emails) {
+      if (!email) continue;
+      await this.db.prepare(
+        'INSERT OR IGNORE INTO session_shares (session_id, email, created_at) VALUES (?, ?, ?)'
+      ).bind(sessionId, email, now).run();
+    }
+  }
+
+  async deleteSessionShares(sessionId: string): Promise<void> {
+    await this.ensureSessionSharesSchema();
+    await this.db.prepare('DELETE FROM session_shares WHERE session_id = ?').bind(sessionId).run();
   }
 
   async createSession(session: Omit<Session, 'created_at' | 'updated_at'>): Promise<void> {
@@ -157,6 +235,8 @@ export class D1Client {
   }
 
   async deleteSession(id: string): Promise<void> {
+    // Ensure any shares are removed even if FK enforcement is off.
+    await this.deleteSessionShares(id);
     await this.db.prepare('DELETE FROM sessions WHERE id = ?').bind(id).run();
     await this.db.prepare('DELETE FROM analyses WHERE session_id = ?').bind(id).run();
   }
@@ -198,11 +278,13 @@ export class D1Client {
 
   // Settings operations
   async getSettings(): Promise<Setting[]> {
+    await this.ensureSettingsSchema();
     const result = await this.db.prepare('SELECT * FROM settings ORDER BY key').all<Setting>();
     return result.results || [];
   }
 
   async getSetting(key: string): Promise<Setting | null> {
+    await this.ensureSettingsSchema();
     const result = await this.db.prepare('SELECT * FROM settings WHERE key = ?').bind(key).first<Setting>();
     return result || null;
   }
@@ -213,6 +295,7 @@ export class D1Client {
   }
 
   async upsertSetting(key: string, value: string): Promise<void> {
+    await this.ensureSettingsSchema();
     const now = new Date().toISOString();
     await this.db.prepare(
       `INSERT INTO settings (key, value, updated_at)

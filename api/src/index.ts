@@ -5,6 +5,7 @@ import { personaRoutes } from './routes/personas';
 import { sessionRoutes } from './routes/sessions';
 import { r2Routes } from './routes/r2';
 import { settingsRoutes } from './routes/settings';
+import { D1Client } from './lib/d1';
 import pkg from '../package.json';
 
 export interface Env {
@@ -48,6 +49,21 @@ app.route('/settings', settingsRoutes);
 // WebSocket upgrade endpoint
 app.get('/sessions/:id/analyze', async (c) => {
   const sessionId = c.req.param('id');
+  const viewerEmail = c.req.header('CF-Access-Authenticated-User-Email') || 'anonymous';
+
+  // Enforce session access before upgrading to a WebSocket.
+  const db = new D1Client(c.env.DB);
+  const session = await db.getSession(sessionId);
+  if (!session) {
+    return c.json({ error: 'Session not found' }, 404);
+  }
+
+  const isOwner = session.user_email === viewerEmail;
+  const hasAccess = isOwner || await db.isSessionSharedWith(sessionId, viewerEmail);
+  if (!hasAccess) {
+    return c.json({ error: 'Access denied' }, 403);
+  }
+
   const id = c.env.SESSION_ANALYZER.idFromName(sessionId);
   const analyzer = c.env.SESSION_ANALYZER.get(id);
   

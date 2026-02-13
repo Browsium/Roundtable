@@ -76,6 +76,14 @@ export const sessionApi = {
     });
   },
 
+  share: async (id: string, emails: string[]): Promise<{ message: string; shared_with: string[] }> => {
+    return fetchWithError(`${getApiUrl()}/sessions/${id}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emails }),
+    });
+  },
+
   create: async (
     fileName: string,
     fileSize: number,

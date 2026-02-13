@@ -36,6 +36,10 @@ function SessionDetailContent() {
   const [retryingId, setRetryingId] = useState<number | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareInput, setShareInput] = useState('');
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   // Load personas to get names
   const loadPersonas = useCallback(async () => {
@@ -96,7 +100,7 @@ function SessionDetailContent() {
 
   // Trigger analysis when session is uploaded
   useEffect(() => {
-    if (session && session.status === 'uploaded' && !wsConnected) {
+    if (session && session.status === 'uploaded' && !wsConnected && session.is_owner) {
       // First try to trigger analysis via API
       sessionApi.startAnalysis(sessionId).then(() => {
         console.log('Analysis triggered via API');
@@ -149,27 +153,44 @@ function SessionDetailContent() {
   };
 
   const handleShare = async () => {
+    if (!session?.is_owner) return;
+    setShareError(null);
+    setShareInput('');
+    setShareOpen(true);
+  };
+
+  const parseEmails = (raw: string) => {
+    const parts = raw
+      .split(/[,\s;]+/)
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+    const unique = Array.from(new Set(parts));
+
+    // Basic email sanity check (not RFC-perfect).
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return unique.filter(e => emailRe.test(e));
+  };
+
+  const handleShareSave = async () => {
     try {
-      const url = window.location.href;
-      const title = `Roundtable Analysis: ${session?.file_name || 'Session'}`;
+      if (!session?.is_owner) return;
+      setShareError(null);
+      setSharing(true);
 
-      if (navigator.share) {
-        await navigator.share({ title, url });
+      const emails = parseEmails(shareInput);
+      if (emails.length === 0) {
+        setShareError('Enter one or more valid email addresses (comma or space separated).');
         return;
       }
 
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-        showNotice('Share link copied to clipboard');
-        return;
-      }
-
-      window.prompt('Copy this link:', url);
+      const resp = await sessionApi.share(sessionId, emails);
+      showNotice(resp.message || 'Session shared');
+      await loadSession();
+      setShareOpen(false);
     } catch (e: any) {
-      const msg = String(e?.message || e);
-      // Ignore user-cancelled share sheets.
-      if (msg.toLowerCase().includes('abort')) return;
-      setError('Failed to share session link');
+      setShareError(e?.message || 'Failed to share session');
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -281,15 +302,20 @@ function SessionDetailContent() {
             <p className="text-gray-600">
               {format(new Date(session.created_at), 'MMM d, yyyy h:mm a')}
             </p>
+            {session.is_shared && (
+              <p className="text-sm text-gray-500 mt-1">Shared with you</p>
+            )}
           </div>
 <div className="flex gap-2">
-          <button
-            onClick={handleShare}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-          >
-            <Share2 className="h-4 w-4 mr-2" />
-            Share
-          </button>
+          {session.is_owner && (
+            <button
+              onClick={handleShare}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              <Share2 className="h-4 w-4 mr-2" />
+              Share
+            </button>
+          )}
           <button
             onClick={handleExport}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
@@ -297,18 +323,20 @@ function SessionDetailContent() {
             <Download className="h-4 w-4 mr-2" />
             Export
           </button>
-          <button
-            onClick={handleDelete}
-            disabled={isDeleting}
-            className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-sm font-medium text-red-700 bg-white hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isDeleting ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-700 mr-2" />
-            ) : (
-              <Trash2 className="h-4 w-4 mr-2" />
-            )}
-            Delete
-          </button>
+          {session.is_owner && (
+            <button
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="inline-flex items-center px-4 py-2 border border-red-300 rounded-md text-sm font-medium text-red-700 bg-white hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isDeleting ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-700 mr-2" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Delete
+            </button>
+          )}
         </div>
         </div>
 
@@ -316,6 +344,93 @@ function SessionDetailContent() {
         {notice && (
           <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
             {notice}
+          </div>
+        )}
+
+        {/* Share Modal */}
+        {shareOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+            onClick={() => setShareOpen(false)}
+          >
+            <div
+              className="w-full max-w-lg rounded-lg bg-white border shadow-lg p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Share Session</h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Add Access-authenticated users by email.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShareOpen(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                  aria-label="Close"
+                  title="Close"
+                >
+                  <span className="text-xl leading-none">×</span>
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Emails
+                  </label>
+                  <textarea
+                    value={shareInput}
+                    onChange={(e) => setShareInput(e.target.value)}
+                    placeholder="alice@company.com, bob@company.com"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    Separate multiple emails with commas or spaces.
+                  </p>
+                </div>
+
+                {Array.isArray(session.share_with_emails) && session.share_with_emails.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-gray-700">Currently shared with</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {session.share_with_emails.map((email) => (
+                        <span
+                          key={email}
+                          className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-mono"
+                        >
+                          {email}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {shareError && (
+                  <div className="flex items-center gap-2 text-red-600 text-sm">
+                    <AlertCircle className="h-4 w-4" />
+                    {shareError}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setShareOpen(false)}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleShareSave}
+                  disabled={sharing}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-50"
+                >
+                  {sharing ? 'Sharing...' : 'Share'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

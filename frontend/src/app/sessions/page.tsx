@@ -138,6 +138,13 @@ export default function SessionsPage() {
                     <h3 className="text-lg font-medium text-gray-900">
                       {session.file_name}
                     </h3>
+                    {session.is_shared && (
+                      <div className="mt-1">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                          Shared
+                        </span>
+                      </div>
+                    )}
                     <p className="text-sm text-gray-500 mt-1">
                       {format(new Date(session.created_at), 'MMM d, yyyy h:mm a')}
                     </p>
@@ -174,18 +181,20 @@ export default function SessionsPage() {
                   >
                     <ArrowRight className="h-5 w-5" />
                   </Link>
-                  <button
-                    onClick={(e) => handleDelete(e, session.id)}
-                    disabled={deletingId === session.id}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
-                    title="Delete session"
-                  >
-                    {deletingId === session.id ? (
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-red-600" />
-                    ) : (
-                      <Trash2 className="h-5 w-5" />
-                    )}
-                  </button>
+                  {session.is_owner && (
+                    <button
+                      onClick={(e) => handleDelete(e, session.id)}
+                      disabled={deletingId === session.id}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete session"
+                    >
+                      {deletingId === session.id ? (
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-red-600" />
+                      ) : (
+                        <Trash2 className="h-5 w-5" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -59,6 +59,15 @@ CREATE TABLE IF NOT EXISTS share_tokens (
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+-- Session shares table - for sharing sessions to other Access-authenticated emails
+CREATE TABLE IF NOT EXISTS session_shares (
+  session_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, email),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_email, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -67,6 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_analyses_persona ON analyses(persona_id);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON share_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_expires ON share_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_session ON share_tokens(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_shares_email ON session_shares(email);
+CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id);
 
 -- Settings table (optional - for global settings like share expiry default)
 CREATE TABLE IF NOT EXISTS settings (

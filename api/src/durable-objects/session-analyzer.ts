@@ -17,6 +17,7 @@ export class SessionAnalyzer {
   private env: Env;
   private websockets: Set<WebSocket> = new Set();
   private analysisStarted: boolean = false;
+  private websocketViewerEmails: Map<WebSocket, string> = new Map();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -49,6 +50,8 @@ export class SessionAnalyzer {
     const server = pair[1];
     
     this.websockets.add(server);
+    const viewerEmail = request.headers.get('CF-Access-Authenticated-User-Email') || 'anonymous';
+    this.websocketViewerEmails.set(server, viewerEmail);
     
     server.accept();
     
@@ -57,7 +60,8 @@ export class SessionAnalyzer {
         const data = JSON.parse(event.data as string);
         
         if (data.action === 'start_analysis') {
-          await this.startAnalysis(data.session_id, server);
+          // Only the session owner may start analysis.
+          await this.startAnalysis(data.session_id, server, viewerEmail, true);
         }
       } catch (error) {
         server.send(JSON.stringify({
@@ -69,6 +73,7 @@ export class SessionAnalyzer {
     
     server.addEventListener('close', () => {
       this.websockets.delete(server);
+      this.websocketViewerEmails.delete(server);
     });
     
     return new Response(null, {
@@ -77,16 +82,13 @@ export class SessionAnalyzer {
     });
   }
 
-  private async startAnalysis(sessionId: string, ws?: WebSocket): Promise<void> {
+  private async startAnalysis(sessionId: string, ws?: WebSocket, requesterEmail?: string, requireOwner: boolean = false): Promise<void> {
     // Prevent duplicate analysis starts
     if (this.analysisStarted) {
       console.log(`Analysis already started for session ${sessionId}, ignoring duplicate request`);
       return;
     }
-    
-    this.analysisStarted = true;
-    console.log(`Starting analysis for session ${sessionId}`);
-    
+
     const db = new D1Client(this.env.DB);
 
     const sendMessage = (msg: any) => {
@@ -114,6 +116,25 @@ export class SessionAnalyzer {
         });
         return;
       }
+
+      if (requireOwner) {
+        const email = requesterEmail || 'anonymous';
+        if (session.user_email !== email) {
+          sendMessage({
+            type: 'error',
+            error: 'Only the owner can start analysis',
+          });
+          return;
+        }
+      }
+
+      if (session.status && session.status !== 'uploaded') {
+        console.log(`Session ${sessionId} is already ${session.status}; refusing to start a new analysis`);
+        return;
+      }
+
+      this.analysisStarted = true;
+      console.log(`Starting analysis for session ${sessionId}`);
 
       // Update session status
       await db.updateSession(sessionId, { status: 'analyzing' });

@@ -21,6 +21,9 @@ export interface Session {
   file_extension?: string;
   selected_persona_ids: string | string[];
   status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
+  is_owner?: boolean;
+  is_shared?: boolean;
+  share_with_emails?: string[];
   created_at: string;
   updated_at?: string;
   analyses?: Analysis[];
