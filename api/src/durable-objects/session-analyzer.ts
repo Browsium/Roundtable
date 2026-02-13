@@ -131,10 +131,13 @@ export class SessionAnalyzer {
 
       // Extract text
       const fileBuffer = await r2Object.arrayBuffer();
+      console.log(`Extracting text from document, buffer size: ${fileBuffer.byteLength} bytes`);
       const { text: documentText } = await extractTextFromDocument(
         fileBuffer,
         session.file_extension
       );
+      console.log(`Extracted document text, length: ${documentText.length}`);
+      console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
 
       // Get personas
       const selectedPersonaIds = JSON.parse(session.selected_persona_ids);
@@ -211,7 +214,32 @@ export class SessionAnalyzer {
     sendMessage: (msg: any) => void,
     db: D1Client
   ): Promise<void> {
-    const clibridge = new CLIBridgeClient(this.env);
+    console.log(`Starting analyzePersona for ${persona.id} in session ${sessionId}`);
+    
+    try {
+      // Get existing analysis or create new one
+      let analyses = await db.getAnalyses(sessionId);
+      let analysis = analyses.find(a => a.persona_id === persona.id);
+      
+      if (!analysis) {
+        analysis = await db.createAnalysis({
+          session_id: sessionId,
+          persona_id: persona.id,
+          status: 'pending',
+        });
+      }
+
+      // Update status to running
+      await db.updateAnalysis(analysis.id, { status: 'running' });
+      sendMessage({
+        type: 'status',
+        persona_id: persona.id,
+        status: 'running',
+      });
+
+      // Initialize CLIBridge client
+      console.log(`Initializing CLIBridge client for persona ${persona.id}`);
+      const clibridge = new CLIBridgeClient(this.env);
 
     try {
       // Update analysis status
