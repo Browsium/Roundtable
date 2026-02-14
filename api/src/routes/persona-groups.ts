@@ -252,9 +252,29 @@ personaGroupRoutes.post('/:id/generate-variants', async (c) => {
   }
 
   const raw = await resp.text();
-  const parsed = safeJsonParse(raw);
+
+  // CLIBridge /v1/complete typically returns a JSON envelope like:
+  // { response: "...", provider: "...", model: "...", ... }
+  // Extract the completion text if present.
+  let completionText = raw;
+  try {
+    const env = JSON.parse(raw);
+    if (env && typeof env === 'object') {
+      const candidates = [env.response, env.text, env.completion, env.content, env.message, env.output];
+      for (const c of candidates) {
+        if (typeof c === 'string' && c.trim()) {
+          completionText = c;
+          break;
+        }
+      }
+    }
+  } catch {
+    // Not JSON; treat as plain text.
+  }
+
+  const parsed = safeJsonParse(completionText);
   if (!Array.isArray(parsed)) {
-    return c.json({ error: 'Variant generation did not return a JSON array', raw: raw.slice(0, 1000) }, 500);
+    return c.json({ error: 'Variant generation did not return a JSON array', raw: completionText.slice(0, 1000) }, 500);
   }
 
   const createdPersonas: any[] = [];
@@ -327,4 +347,3 @@ personaGroupRoutes.post('/:id/generate-variants', async (c) => {
     created_personas: createdPersonas,
   });
 });
-
