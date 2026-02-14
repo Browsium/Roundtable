@@ -13,7 +13,11 @@ function hasArg(name: string): boolean {
 }
 
 async function runStdio(): Promise<void> {
-  const server = createRoundtableMcpServer({ version: pkg.version, mode: 'stdio' });
+  // When running inside a remote container (ex: Docker MCP Gateway), STDIO transport is still used,
+  // but we want "remote-friendly" semantics: no local file_path access, and exports returned as blobs.
+  const remoteHint = (process.env.ROUNDTABLE_MCP_REMOTE || '').trim().toLowerCase();
+  const isRemote = remoteHint === '1' || remoteHint === 'true' || remoteHint === 'yes';
+  const server = createRoundtableMcpServer({ version: pkg.version, mode: isRemote ? 'http' : 'stdio' });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -34,4 +38,3 @@ main().catch((err) => {
   console.error('roundtable-mcp fatal:', err);
   process.exit(1);
 });
-
