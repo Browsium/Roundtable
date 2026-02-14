@@ -1,11 +1,17 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, Users, ArrowRight, Check, AlertCircle } from 'lucide-react';
-import { personaApi, sessionApi, r2Api } from '@/lib/api';
+import { personaApi, sessionApi, r2Api, settingsApi } from '@/lib/api';
 import type { Persona } from '@/lib/types';
 import { useRouter } from 'next/navigation';
+import {
+  DEFAULT_ANALYSIS_MODEL,
+  DEFAULT_ANALYSIS_PROVIDER,
+  MODEL_PRESETS,
+  inferPresetId,
+} from '@/lib/analysis-presets';
 
 export default function Home() {
   const router = useRouter();
@@ -15,6 +21,9 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'upload' | 'select'>('upload');
+  const [analysisProvider, setAnalysisProvider] = useState(DEFAULT_ANALYSIS_PROVIDER);
+  const [analysisModel, setAnalysisModel] = useState(DEFAULT_ANALYSIS_MODEL);
+  const [analysisPreset, setAnalysisPreset] = useState('claude-sonnet');
 
   // Load personas on mount
   const loadPersonas = useCallback(async () => {
@@ -24,6 +33,22 @@ export default function Home() {
     } catch (err) {
       console.error('Failed to load personas:', err);
     }
+  }, []);
+
+  // Default analysis backend for new sessions: fetched from API settings.
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await settingsApi.getAll();
+        const provider = (data.analysis_provider || DEFAULT_ANALYSIS_PROVIDER).trim();
+        const model = (data.analysis_model || DEFAULT_ANALYSIS_MODEL).trim();
+        setAnalysisProvider(provider);
+        setAnalysisModel(model);
+        setAnalysisPreset(inferPresetId(provider, model));
+      } catch {
+        // If settings are unreachable, keep defaults.
+      }
+    })();
   }, []);
 
   // File upload handling
@@ -73,7 +98,16 @@ export default function Home() {
     loadPersonas();
   };
 
-const handleStartAnalysis = async () => {
+  const handlePresetChange = (id: string) => {
+    setAnalysisPreset(id);
+    const preset = MODEL_PRESETS.find(p => p.id === id);
+    if (!preset) return;
+    if (id === 'custom') return;
+    setAnalysisProvider(preset.provider);
+    setAnalysisModel(preset.model);
+  };
+
+ const handleStartAnalysis = async () => {
     if (!file || selectedPersonas.length === 0) {
       setError('Please select at least one persona');
       return;
@@ -91,7 +125,9 @@ const handleStartAnalysis = async () => {
         file.name,
         file.size,
         fileExtension,
-        selectedPersonas
+        selectedPersonas,
+        analysisProvider.trim(),
+        analysisModel.trim()
       );
 
       // Upload file to R2
@@ -187,6 +223,58 @@ const handleStartAnalysis = async () => {
             >
               {selectedPersonas.length === personas.length ? 'Deselect All' : 'Select All'}
             </button>
+          </div>
+
+          <div className="bg-white border rounded-lg p-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <h4 className="font-medium text-gray-900">Analysis Backend</h4>
+                <p className="text-sm text-gray-600 mt-1">
+                  Applies to this document. You can change defaults in Settings.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600">Preset</label>
+                <select
+                  value={analysisPreset}
+                  onChange={(e) => handlePresetChange(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {MODEL_PRESETS.map(p => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                <input
+                  type="text"
+                  value={analysisProvider}
+                  onChange={(e) => {
+                    setAnalysisPreset('custom');
+                    setAnalysisProvider(e.target.value);
+                  }}
+                  disabled={analysisPreset !== 'custom'}
+                  className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
+                <input
+                  type="text"
+                  value={analysisModel}
+                  onChange={(e) => {
+                    setAnalysisPreset('custom');
+                    setAnalysisModel(e.target.value);
+                  }}
+                  disabled={analysisPreset !== 'custom'}
+                  className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

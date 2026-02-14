@@ -234,10 +234,31 @@ export class D1Client {
 
   async createSession(session: Omit<Session, 'created_at' | 'updated_at'>): Promise<void> {
     const now = new Date().toISOString();
-    await this.db.prepare(
-      `INSERT INTO sessions (id, user_email, file_name, file_r2_key, file_size_bytes, file_extension, selected_persona_ids, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
+
+    const includeBackend =
+      Object.prototype.hasOwnProperty.call(session, 'analysis_provider') ||
+      Object.prototype.hasOwnProperty.call(session, 'analysis_model');
+    if (includeBackend) {
+      await this.ensureAnalysisBackendColumns();
+    }
+
+    const columns = [
+      'id',
+      'user_email',
+      'file_name',
+      'file_r2_key',
+      'file_size_bytes',
+      'file_extension',
+      'selected_persona_ids',
+      'status',
+      ...(includeBackend ? ['analysis_provider', 'analysis_model'] : []),
+      'created_at',
+      'updated_at',
+    ];
+
+    const placeholders = columns.map(() => '?').join(', ');
+
+    const values: any[] = [
       session.id,
       session.user_email,
       session.file_name,
@@ -246,9 +267,19 @@ export class D1Client {
       session.file_extension,
       session.selected_persona_ids,
       session.status,
-      now,
-      now
-    ).run();
+    ];
+
+    if (includeBackend) {
+      values.push((session as any).analysis_provider || null);
+      values.push((session as any).analysis_model || null);
+    }
+
+    values.push(now, now);
+
+    await this.db.prepare(
+      `INSERT INTO sessions (${columns.join(', ')})
+       VALUES (${placeholders})`
+    ).bind(...values).run();
   }
 
   async updateSession(id: string, updates: Partial<Session>): Promise<void> {

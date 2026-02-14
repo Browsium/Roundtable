@@ -133,17 +133,25 @@ export class SessionAnalyzer {
         return;
       }
 
-      // Use global settings for the next analysis run, and persist them on the session for reporting.
+      // Choose provider/model for this session:
+      // 1) session-scoped override (preferred)
+      // 2) global settings (fallback)
+      // 3) hard-coded default (last resort)
       const DEFAULT_ANALYSIS_PROVIDER = 'claude';
       const DEFAULT_ANALYSIS_MODEL = 'sonnet';
+
+      const sessionProvider = (session.analysis_provider || '').trim();
+      const sessionModel = (session.analysis_model || '').trim();
 
       const configuredProvider = (await db.getSettingValue('analysis_provider'))?.trim();
       const configuredModel = (await db.getSettingValue('analysis_model'))?.trim();
 
-      const analysisBackend = {
-        provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
-        model: configuredModel || DEFAULT_ANALYSIS_MODEL,
-      };
+      const analysisBackend = (sessionProvider && sessionModel)
+        ? { provider: sessionProvider, model: sessionModel }
+        : {
+          provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
+          model: configuredModel || DEFAULT_ANALYSIS_MODEL,
+        };
 
       console.log(`Analysis backend for session ${sessionId}:`, analysisBackend);
 

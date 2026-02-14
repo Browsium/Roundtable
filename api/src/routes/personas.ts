@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../index';
 import { D1Client } from '../lib/d1';
 import { CLIBridgeClient } from '../lib/clibridge';
-import { generateSkillFromPersona, validateSkillName } from '../lib/skill-generator';
+import { generateNextVersion, generateSkillFromPersona, validateSkillName } from '../lib/skill-generator';
 
 export const personaRoutes = new Hono<{ Bindings: Env }>();
 
@@ -66,12 +66,22 @@ personaRoutes.put('/:id', async (c) => {
   }
   
   if (profile_json) {
-    const updates: any = {
-      profile_json: JSON.stringify(profile_json),
-    };
+    const updates: any = { profile_json: JSON.stringify(profile_json) };
     
     if (profile_json.name) updates.name = profile_json.name;
     if (profile_json.role) updates.role = profile_json.role;
+
+    // Editing a persona creates a new skill version. Mark as draft until re-deployed.
+    const versionMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec((existing.version || '').trim());
+    const baseVersion = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}` : '1.0.0';
+    const nextVersion = generateNextVersion(baseVersion);
+    const skill = generateSkillFromPersona(profile_json, nextVersion);
+
+    updates.version = nextVersion;
+    updates.skill_name = skill.skillName;
+    updates.skill_path = `roundtable/${skill.skillName}`;
+    updates.status = 'draft';
+    updates.deployed_at = null;
     
     await db.updatePersona(id, updates);
   }
@@ -125,6 +135,8 @@ personaRoutes.post('/:id/deploy', async (c) => {
     await db.updatePersona(id, {
       status: 'deployed',
       deployed_at: new Date().toISOString(),
+      skill_name: skill.skillName,
+      skill_path: `roundtable/${skill.skillName}`,
     });
     
     return c.json({

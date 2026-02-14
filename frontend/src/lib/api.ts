@@ -88,7 +88,9 @@ export const sessionApi = {
     fileName: string,
     fileSize: number,
     fileExtension: string,
-    selectedPersonaIds: string[]
+    selectedPersonaIds: string[],
+    analysisProvider?: string,
+    analysisModel?: string
   ): Promise<Session> => {
     return fetchWithError(`${getApiUrl()}/sessions`, {
       method: 'POST',
@@ -98,6 +100,10 @@ export const sessionApi = {
         file_size_bytes: fileSize,
         file_extension: fileExtension,
         selected_persona_ids: selectedPersonaIds,
+        ...(analysisProvider && analysisModel ? {
+          analysis_provider: analysisProvider,
+          analysis_model: analysisModel,
+        } : {}),
       }),
     });
   },

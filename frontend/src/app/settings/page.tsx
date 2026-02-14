@@ -4,31 +4,18 @@ import { useState, useEffect } from 'react';
 import { Settings, Check, AlertCircle, GitBranch, Server, Monitor } from 'lucide-react';
 import { FRONTEND_VERSION, BUILD_DATE } from '@/lib/version';
 import { settingsApi } from '@/lib/api';
+import {
+  DEFAULT_ANALYSIS_MODEL,
+  DEFAULT_ANALYSIS_PROVIDER,
+  MODEL_PRESETS,
+  inferPresetId,
+} from '@/lib/analysis-presets';
 
 interface ApiVersionInfo {
   version: string;
   build_date: string;
   environment: string;
 }
-
-type ModelPreset = {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-};
-
-const MODEL_PRESETS: ModelPreset[] = [
-  { id: 'claude-sonnet', label: 'Claude (Sonnet)', provider: 'claude', model: 'sonnet' },
-  { id: 'codex', label: 'Codex (default)', provider: 'codex', model: 'default' },
-  { id: 'gemini', label: 'Gemini (default)', provider: 'gemini', model: 'default' },
-  { id: 'kimi-2.5', label: 'Kimi 2.5', provider: 'kimi', model: '2.5' },
-  { id: 'deepseek-3.1', label: 'DeepSeek 3.1', provider: 'deepseek', model: '3.1' },
-  { id: 'minimax-2.1', label: 'MiniMax 2.1', provider: 'minimax', model: '2.1' },
-  { id: 'deepseek-r1', label: 'DeepSeek R1', provider: 'deepseek', model: 'r1' },
-  { id: 'nemotron', label: 'Nemotron (default)', provider: 'nemotron', model: 'default' },
-  { id: 'custom', label: 'Custom', provider: '', model: '' },
-];
 
 export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState('');
@@ -38,8 +25,8 @@ export default function SettingsPage() {
   const [apiVersion, setApiVersion] = useState<ApiVersionInfo | null>(null);
   const [versionError, setVersionError] = useState<string | null>(null);
 
-  const [analysisProvider, setAnalysisProvider] = useState('claude');
-  const [analysisModel, setAnalysisModel] = useState('sonnet');
+  const [analysisProvider, setAnalysisProvider] = useState(DEFAULT_ANALYSIS_PROVIDER);
+  const [analysisModel, setAnalysisModel] = useState(DEFAULT_ANALYSIS_MODEL);
   const [analysisPreset, setAnalysisPreset] = useState('claude-sonnet');
   const [analysisSavedMessage, setAnalysisSavedMessage] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -72,21 +59,12 @@ export default function SettingsPage() {
     }
   };
 
-  const inferPresetId = (provider: string, model: string) => {
-    const normalizedProvider = provider.trim().toLowerCase();
-    const normalizedModel = model.trim().toLowerCase();
-    const match = MODEL_PRESETS.find(
-      p => p.provider.toLowerCase() === normalizedProvider && p.model.toLowerCase() === normalizedModel
-    );
-    return match?.id || 'custom';
-  };
-
   const fetchApiSettings = async (url: string) => {
     try {
       setAnalysisError(null);
       const data = await settingsApi.getAll(url);
-      const provider = (data.analysis_provider || 'claude').trim();
-      const model = (data.analysis_model || 'sonnet').trim();
+      const provider = (data.analysis_provider || DEFAULT_ANALYSIS_PROVIDER).trim();
+      const model = (data.analysis_model || DEFAULT_ANALYSIS_MODEL).trim();
 
       setAnalysisProvider(provider);
       setAnalysisModel(model);

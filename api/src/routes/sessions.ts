@@ -83,9 +83,25 @@ sessionRoutes.get('/:id', async (c) => {
 sessionRoutes.post('/', async (c) => {
   const body = await c.req.json();
   const { file_name, file_size_bytes, file_extension, selected_persona_ids } = body;
+  const analysis_provider = typeof body?.analysis_provider === 'string' ? body.analysis_provider : undefined;
+  const analysis_model = typeof body?.analysis_model === 'string' ? body.analysis_model : undefined;
   
   if (!file_name || !selected_persona_ids) {
     return c.json({ error: 'file_name and selected_persona_ids are required' }, 400);
+  }
+
+  const hasProvider = analysis_provider !== undefined;
+  const hasModel = analysis_model !== undefined;
+  if (hasProvider !== hasModel) {
+    return c.json({ error: 'analysis_provider and analysis_model must be provided together' }, 400);
+  }
+  const providerTrimmed = hasProvider ? (analysis_provider || '').trim() : undefined;
+  const modelTrimmed = hasModel ? (analysis_model || '').trim() : undefined;
+  if (hasProvider && !providerTrimmed) {
+    return c.json({ error: 'analysis_provider cannot be empty' }, 400);
+  }
+  if (hasModel && !modelTrimmed) {
+    return c.json({ error: 'analysis_model cannot be empty' }, 400);
   }
   
   const userEmail = getViewerEmail(c);
@@ -102,6 +118,10 @@ sessionRoutes.post('/', async (c) => {
     file_extension: file_extension || getFileExtension(file_name),
     selected_persona_ids: JSON.stringify(selected_persona_ids),
     status: 'uploaded',
+    ...(hasProvider && hasModel ? {
+      analysis_provider: providerTrimmed,
+      analysis_model: modelTrimmed,
+    } : {}),
   });
   
   // Create analysis records for each persona
