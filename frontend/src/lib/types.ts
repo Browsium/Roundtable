@@ -23,6 +23,9 @@ export interface Session {
   status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
   analysis_provider?: string;
   analysis_model?: string;
+  workflow?: string;
+  analysis_config_json?: any;
+  error_message?: string;
   is_owner?: boolean;
   is_shared?: boolean;
   share_with_emails?: string[];
@@ -60,4 +63,15 @@ export interface WebSocketMessage {
   error?: string;
   session_id?: string;
   status?: string;
+}
+
+export interface AnalysisArtifact {
+  id: number;
+  session_id: string;
+  persona_id: string;
+  artifact_type: string;
+  backend_provider?: string;
+  backend_model?: string;
+  content_json: any;
+  created_at: string;
 }

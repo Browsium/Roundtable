@@ -86,6 +86,8 @@ sessionRoutes.post('/', async (c) => {
   const { file_name, file_size_bytes, file_extension, selected_persona_ids } = body;
   const analysis_provider = typeof body?.analysis_provider === 'string' ? body.analysis_provider : undefined;
   const analysis_model = typeof body?.analysis_model === 'string' ? body.analysis_model : undefined;
+  const workflow = typeof body?.workflow === 'string' ? body.workflow.trim() : '';
+  const analysis_config_json = body?.analysis_config_json;
   
   if (!file_name || !selected_persona_ids) {
     return c.json({ error: 'file_name and selected_persona_ids are required' }, 400);
@@ -115,12 +117,66 @@ sessionRoutes.post('/', async (c) => {
     providerFinal = validation.backend.provider;
     modelFinal = validation.backend.model;
   }
+
+  let workflowFinal: string | undefined = undefined;
+  if (workflow) {
+    const normalized = workflow.trim().toLowerCase();
+    const allowed = new Set(['roundtable_council', 'role_variant_discussion', 'roundtable_standard']);
+    if (!allowed.has(normalized)) {
+      return c.json({ error: `Invalid workflow '${workflow}'. Allowed: ${Array.from(allowed).join(', ')}` }, 400);
+    }
+    workflowFinal = normalized;
+  }
+
+  let configFinal: string | undefined = undefined;
+  if (analysis_config_json !== undefined) {
+    if (analysis_config_json === null) {
+      configFinal = undefined;
+    } else if (typeof analysis_config_json === 'string') {
+      // Accept pre-stringified JSON.
+      const trimmed = analysis_config_json.trim();
+      if (trimmed) {
+        try {
+          JSON.parse(trimmed);
+        } catch {
+          return c.json({ error: 'analysis_config_json must be valid JSON' }, 400);
+        }
+        configFinal = trimmed;
+      }
+    } else if (typeof analysis_config_json === 'object') {
+      configFinal = JSON.stringify(analysis_config_json);
+    } else {
+      return c.json({ error: 'analysis_config_json must be an object or JSON string' }, 400);
+    }
+  }
   
   const userEmail = getViewerEmail(c);
   const sessionId = crypto.randomUUID();
   const r2Key = generateR2Key(sessionId, file_name);
   
   const db = new D1Client(c.env.DB);
+
+  // For broad roundtables (standard/council), prevent selecting multiple personas with the same role.
+  // For role-variant discussion, duplicates are expected.
+  const effectiveWorkflow = workflowFinal || 'roundtable_standard';
+  if (effectiveWorkflow !== 'role_variant_discussion') {
+    const roles: string[] = [];
+    for (const personaId of selected_persona_ids) {
+      const p = await db.getPersona(String(personaId));
+      if (p?.role) roles.push(p.role.trim().toLowerCase());
+    }
+    const seen = new Set<string>();
+    const dups = new Set<string>();
+    for (const r of roles) {
+      if (!r) continue;
+      if (seen.has(r)) dups.add(r);
+      seen.add(r);
+    }
+    if (dups.size > 0) {
+      return c.json({ error: `Only one persona per role is allowed in broad roundtable runs. Duplicate roles: ${Array.from(dups).join(', ')}` }, 400);
+    }
+  }
+
   await db.createSession({
     id: sessionId,
     user_email: userEmail,
@@ -133,6 +189,10 @@ sessionRoutes.post('/', async (c) => {
     ...(hasProvider && hasModel ? {
       analysis_provider: providerFinal,
       analysis_model: modelFinal,
+    } : {}),
+    ...(workflowFinal || configFinal ? {
+      ...(workflowFinal ? { workflow: workflowFinal } : {}),
+      ...(configFinal ? { analysis_config_json: configFinal } : {}),
     } : {}),
   });
   
@@ -259,6 +319,33 @@ sessionRoutes.delete('/:id', async (c) => {
   await db.deleteSession(id);
 
   return c.json({ message: 'Session deleted' });
+});
+
+// Get analysis artifacts for a session
+sessionRoutes.get('/:id/artifacts', async (c) => {
+  const sessionId = c.req.param('id');
+  const viewerEmail = getViewerEmail(c);
+  const db = new D1Client(c.env.DB);
+
+  const session = await db.getSession(sessionId);
+  if (!session) {
+    return c.json({ error: 'Session not found' }, 404);
+  }
+
+  const isOwner = session.user_email === viewerEmail;
+  const hasAccess = isOwner || await db.isSessionSharedWith(sessionId, viewerEmail);
+  if (!hasAccess) {
+    return c.json({ error: 'Access denied' }, 403);
+  }
+
+  const personaId = (c.req.query('persona_id') as string | undefined) || undefined;
+  const artifactType = (c.req.query('artifact_type') as string | undefined) || undefined;
+  const artifacts = await db.getAnalysisArtifacts(sessionId, {
+    persona_id: personaId,
+    artifact_type: artifactType,
+  });
+
+  return c.json({ session_id: sessionId, artifacts });
 });
 
 // Trigger analysis manually (fallback for when WebSocket doesn't work)

@@ -13,6 +13,8 @@ interface AnalysisMessage {
   session_id?: string;
 }
 
+type Backend = { provider: string; model: string };
+
 export class SessionAnalyzer {
   private state: DurableObjectState;
   private env: Env;
@@ -153,6 +155,21 @@ export class SessionAnalyzer {
         return;
       }
 
+      const workflowRaw = (session.workflow || '').trim().toLowerCase();
+      const workflow = (workflowRaw === 'roundtable_council' || workflowRaw === 'role_variant_discussion' || workflowRaw === 'roundtable_standard')
+        ? workflowRaw
+        : 'roundtable_standard';
+
+      let analysisConfig: any = {};
+      const rawConfig = (session.analysis_config_json || '').trim();
+      if (rawConfig) {
+        try {
+          analysisConfig = JSON.parse(rawConfig);
+        } catch (e) {
+          console.warn(`Invalid analysis_config_json for session ${sessionId}; ignoring.`, e);
+        }
+      }
+
       // Choose provider/model for this session:
       // 1) session-scoped override (preferred)
       // 2) global settings (fallback)
@@ -194,7 +211,60 @@ export class SessionAnalyzer {
       }
 
       const validatedBackend = backendValidation.backend;
-      console.log(`Analysis backend for session ${sessionId}:`, validatedBackend);
+
+      const parseBackend = (v: any): Backend | null => {
+        if (!v || typeof v !== 'object') return null;
+        const provider = typeof v.provider === 'string' ? v.provider.trim() : '';
+        const model = typeof v.model === 'string' ? v.model.trim() : '';
+        if (!provider || !model) return null;
+        const validation = validateAnalysisBackend(this.env, provider, model);
+        if (!validation.ok) return null;
+        return validation.backend;
+      };
+
+      // Workflow plan
+      let sessionDisplayBackend: Backend = validatedBackend;
+      let roundtableBackend: Backend = validatedBackend; // used for standard
+
+      let councilMembers: Backend[] = [validatedBackend];
+      let councilReviewer: Backend = validatedBackend;
+      let councilChair: Backend = validatedBackend;
+
+      let discussionVariantBackend: Backend = validatedBackend;
+      let discussionChair: Backend = validatedBackend;
+      let discussionGroupId: string = '';
+
+      if (workflow === 'roundtable_council') {
+        const councilCfg = (analysisConfig && typeof analysisConfig === 'object')
+          ? ((analysisConfig.council && typeof analysisConfig.council === 'object') ? analysisConfig.council : analysisConfig)
+          : {};
+
+        const membersRaw = Array.isArray(councilCfg.members) ? councilCfg.members : [];
+        const members: Backend[] = [];
+        for (const m of membersRaw) {
+          const b = parseBackend(m);
+          if (b) members.push(b);
+        }
+        councilMembers = members.length > 0 ? members : [validatedBackend];
+
+        councilChair = parseBackend(councilCfg.chair_backend || councilCfg.chair) || validatedBackend;
+        councilReviewer = parseBackend(councilCfg.reviewer_backend || councilCfg.reviewer) || councilChair;
+        sessionDisplayBackend = councilChair;
+      } else if (workflow === 'role_variant_discussion') {
+        const discussionCfg = (analysisConfig && typeof analysisConfig === 'object')
+          ? ((analysisConfig.discussion && typeof analysisConfig.discussion === 'object') ? analysisConfig.discussion : analysisConfig)
+          : {};
+
+        discussionVariantBackend = parseBackend(discussionCfg.variant_backend || discussionCfg.variant) || validatedBackend;
+        discussionChair = parseBackend(discussionCfg.chair_backend || discussionCfg.chair) || validatedBackend;
+        discussionGroupId = typeof discussionCfg.persona_group_id === 'string' ? discussionCfg.persona_group_id.trim() : '';
+        sessionDisplayBackend = discussionChair;
+      } else {
+        roundtableBackend = validatedBackend;
+        sessionDisplayBackend = validatedBackend;
+      }
+
+      console.log(`Analysis workflow for session ${sessionId}:`, { workflow, sessionBackend: sessionDisplayBackend });
 
       this.analysisStarted = true;
       console.log(`Starting analysis for session ${sessionId}`);
@@ -202,8 +272,8 @@ export class SessionAnalyzer {
       // Update session status
       await db.updateSession(sessionId, {
         status: 'analyzing',
-        analysis_provider: validatedBackend.provider,
-        analysis_model: validatedBackend.model,
+        analysis_provider: sessionDisplayBackend.provider,
+        analysis_model: sessionDisplayBackend.model,
         error_message: null as any,
       });
       sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
@@ -211,10 +281,11 @@ export class SessionAnalyzer {
       // Best-effort: persist backend on all per-persona analyses for reporting, even if a persona never starts.
       try {
         const existingAnalyses = await db.getAnalyses(sessionId);
+        const perAnalysisBackend = workflow === 'role_variant_discussion' ? discussionVariantBackend : sessionDisplayBackend;
         for (const a of existingAnalyses) {
           await db.updateAnalysis(a.id, {
-            analysis_provider: validatedBackend.provider,
-            analysis_model: validatedBackend.model,
+            analysis_provider: perAnalysisBackend.provider,
+            analysis_model: perAnalysisBackend.model,
           });
         }
       } catch (e) {
@@ -275,12 +346,36 @@ export class SessionAnalyzer {
 
       // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
       const maxConcurrency = 2; // Reduce to 2 concurrent analyses to be more conservative
-      for (let i = 0; i < personas.length; i += maxConcurrency) {
-        const batch = personas.slice(i, i + maxConcurrency);
-        const analysisPromises = batch.map(persona =>
-          this.analyzePersona(sessionId, persona, documentText, sendMessage, db, validatedBackend)
-        );
-        await Promise.all(analysisPromises);
+
+      if (workflow === 'roundtable_council') {
+        for (let i = 0; i < personas.length; i += maxConcurrency) {
+          const batch = personas.slice(i, i + maxConcurrency);
+          const analysisPromises = batch.map(persona =>
+            this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, {
+              members: councilMembers,
+              reviewer: councilReviewer,
+              chair: councilChair,
+            })
+          );
+          await Promise.all(analysisPromises);
+        }
+      } else {
+        const perPersonaBackend = workflow === 'role_variant_discussion' ? discussionVariantBackend : roundtableBackend;
+        for (let i = 0; i < personas.length; i += maxConcurrency) {
+          const batch = personas.slice(i, i + maxConcurrency);
+          const analysisPromises = batch.map(persona =>
+            this.analyzePersona(sessionId, persona, documentText, sendMessage, db, perPersonaBackend)
+          );
+          await Promise.all(analysisPromises);
+        }
+
+        // Discussion workflow adds a second stage: cross-critique + chair synthesis.
+        if (workflow === 'role_variant_discussion') {
+          await this.runRoleVariantDiscussionSynthesis(sessionId, personas, discussionGroupId, documentText, sendMessage, db, {
+            variantBackend: discussionVariantBackend,
+            chairBackend: discussionChair,
+          });
+        }
       }
 
       // All complete
@@ -336,6 +431,502 @@ export class SessionAnalyzer {
     }
   }
 }
+
+  private async parseRoundtableResultFromText(fullResponse: string, persona: any): Promise<any> {
+    const trimmed = (fullResponse || '').trim();
+    if (!trimmed) {
+      throw new Error('Empty response');
+    }
+
+    // Try to extract JSON from the response
+    const jsonMatch = trimmed.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/);
+    if (jsonMatch) {
+      try {
+        const result = JSON.parse(jsonMatch[1]);
+        return this.normalizeResult(result, persona);
+      } catch {
+        // fallthrough
+      }
+    }
+
+    try {
+      const result = JSON.parse(trimmed);
+      return this.normalizeResult(result, persona);
+    } catch {
+      // Best-effort: extract a JSON object from surrounding text.
+      const firstBrace = trimmed.indexOf('{');
+      const lastBrace = trimmed.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        const maybeJson = trimmed.slice(firstBrace, lastBrace + 1);
+        const result = JSON.parse(maybeJson);
+        return this.normalizeResult(result, persona);
+      }
+    }
+
+    throw new Error('Failed to parse JSON result');
+  }
+
+  private async clibridgeCompleteText(req: { provider: string; model: string; systemPrompt: string; messages: Array<{ role: string; content: string }> }): Promise<string> {
+    const clibridge = new CLIBridgeClient(this.env);
+    const resp = await clibridge.completeAnalysis(req);
+    if (!resp.ok) {
+      const errorText = await resp.text().catch(() => '');
+      throw new Error(`CLIBridge complete returned ${resp.status}: ${resp.statusText} - ${errorText.substring(0, 200)}`);
+    }
+    const raw = await resp.text();
+    return this.extractCompletionText(raw);
+  }
+
+  private buildCouncilReviewPrompt(persona: any): string {
+    const profile = JSON.parse(persona.profile_json);
+    return `You are a strict reviewer helping select the best candidate analysis for a ${profile.role}.
+
+You will be given multiple candidate JSON analyses for the SAME persona and document, each from different model backends.
+Your job is to:
+1) Rank them best-to-worst.
+2) Identify inaccuracies, unsupported claims, rubric misses, and low-specificity feedback.
+3) Provide merge guidance for a chairman to synthesize a final answer.
+
+OUTPUT FORMAT:
+Respond with ONLY valid JSON:
+{
+  "ranking": [
+    {"candidate_id": "c1", "rank": 1, "why": "..."},
+    {"candidate_id": "c2", "rank": 2, "why": "..."}
+  ],
+  "key_flaws": ["..."],
+  "merge_guidance": ["..."],
+  "overall_recommendation": "..."
+}`;
+  }
+
+  private buildCouncilChairPrompt(persona: any): string {
+    const profile = JSON.parse(persona.profile_json);
+    return `You are the chairman synthesizing multiple candidate analyses into ONE final answer for ${profile.name} (${profile.role}).
+
+You will receive:
+- candidates: an array of candidate JSON analyses
+- reviewer: a JSON review with ranking + merge guidance
+
+TASK:
+Produce a single final analysis in the EXACT Roundtable JSON shape below. Use the best parts of the candidates, fix flaws, and ensure the output is specific and actionable.
+
+OUTPUT FORMAT:
+Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
+{
+  "persona_role": "${profile.role}",
+  "overall_score": 7,
+  "dimension_scores": {
+    "relevance": { "score": 8, "commentary": "..." },
+    "technical_credibility": { "score": 6, "commentary": "..." },
+    "differentiation": { "score": 5, "commentary": "..." },
+    "actionability": { "score": 7, "commentary": "..." },
+    "trust_signals": { "score": 6, "commentary": "..." },
+    "language_fit": { "score": 7, "commentary": "..." }
+  },
+  "top_3_issues": [
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." },
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." },
+    { "issue": "...", "specific_example_from_content": "...", "suggested_rewrite": "..." }
+  ],
+  "what_works_well": ["...", "..."],
+  "overall_verdict": "...",
+  "rewritten_headline_suggestion": "..."
+}`;
+  }
+
+  private async analyzePersonaCouncil(
+    sessionId: string,
+    persona: any,
+    documentText: string,
+    sendMessage: (msg: any) => void,
+    db: D1Client,
+    council: { members: Backend[]; reviewer: Backend; chair: Backend }
+  ): Promise<void> {
+    console.log(`Starting analyzePersonaCouncil for ${persona.id} in session ${sessionId}`);
+
+    try {
+      // Get existing analysis record
+      const analyses = await db.getAnalyses(sessionId);
+      const analysis = analyses.find(a => a.persona_id === persona.id);
+      if (!analysis) {
+        throw new Error(`Missing analysis row for persona ${persona.id}`);
+      }
+
+      await db.updateAnalysis(analysis.id, {
+        status: 'running',
+        started_at: new Date().toISOString(),
+        completed_at: null as any,
+        score_json: null as any,
+        top_issues_json: null as any,
+        rewritten_suggestions_json: null as any,
+        error_message: null as any,
+        analysis_provider: council.chair.provider,
+        analysis_model: council.chair.model,
+      });
+
+      sendMessage({ type: 'status', persona_id: persona.id, status: 'running' });
+
+      const systemPrompt = this.buildSystemPrompt(persona);
+
+      const MAX_DOC_CHARS = 8000;
+      const documentForAnalysis = documentText.length > MAX_DOC_CHARS ? documentText.slice(0, MAX_DOC_CHARS) : documentText;
+
+      const candidates: Array<{ candidate_id: string; backend: Backend; raw: string; parsed?: any; parse_error?: string }> = [];
+      let idx = 0;
+      for (const member of council.members) {
+        idx += 1;
+        const candidateId = `c${idx}`;
+        try {
+          const raw = await this.clibridgeCompleteText({
+            provider: member.provider,
+            model: member.model,
+            systemPrompt,
+            messages: [{ role: 'user', content: documentForAnalysis }],
+          });
+
+          let parsed: any | undefined;
+          let parseError: string | undefined;
+          try {
+            parsed = await this.parseRoundtableResultFromText(raw, persona);
+          } catch (e) {
+            parseError = String(e);
+          }
+
+          candidates.push({ candidate_id: candidateId, backend: member, raw, parsed, parse_error: parseError });
+          await db.createAnalysisArtifact({
+            session_id: sessionId,
+            persona_id: persona.id,
+            artifact_type: 'council_member_output',
+            backend_provider: member.provider,
+            backend_model: member.model,
+            content_json: JSON.stringify({ candidate_id: candidateId, raw, parsed: parsed || null, parse_error: parseError || null }),
+          } as any);
+        } catch (e) {
+          const err = String(e);
+          candidates.push({ candidate_id: candidateId, backend: member, raw: '', parse_error: err });
+          await db.createAnalysisArtifact({
+            session_id: sessionId,
+            persona_id: persona.id,
+            artifact_type: 'council_member_output',
+            backend_provider: member.provider,
+            backend_model: member.model,
+            content_json: JSON.stringify({ candidate_id: candidateId, raw: null, parsed: null, parse_error: err }),
+          } as any);
+        }
+      }
+
+      const usable = candidates.filter((c) => c.parsed && typeof c.parsed === 'object');
+      if (usable.length === 0) {
+        throw new Error('No usable candidate JSON produced by council members');
+      }
+
+      // Reviewer step (best-effort)
+      let reviewerJson: any = null;
+      try {
+        const reviewerText = await this.clibridgeCompleteText({
+          provider: council.reviewer.provider,
+          model: council.reviewer.model,
+          systemPrompt: this.buildCouncilReviewPrompt(persona),
+          messages: [{
+            role: 'user',
+            content: JSON.stringify({
+              persona_id: persona.id,
+              candidates: usable.map((c) => ({ candidate_id: c.candidate_id, backend: c.backend, analysis: c.parsed })),
+            }),
+          }],
+        });
+        reviewerJson = JSON.parse(reviewerText);
+      } catch (e) {
+        reviewerJson = { error: String(e) };
+      }
+
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: persona.id,
+        artifact_type: 'council_peer_review',
+        backend_provider: council.reviewer.provider,
+        backend_model: council.reviewer.model,
+        content_json: JSON.stringify(reviewerJson),
+      } as any);
+
+      // Chair synthesis
+      let finalResult: any;
+      try {
+        const chairText = await this.clibridgeCompleteText({
+          provider: council.chair.provider,
+          model: council.chair.model,
+          systemPrompt: this.buildCouncilChairPrompt(persona),
+          messages: [{
+            role: 'user',
+            content: JSON.stringify({
+              persona_id: persona.id,
+              candidates: usable.map((c) => ({ candidate_id: c.candidate_id, backend: c.backend, analysis: c.parsed })),
+              reviewer: reviewerJson,
+            }),
+          }],
+        });
+        finalResult = await this.parseRoundtableResultFromText(chairText, persona);
+      } catch (e) {
+        console.warn(`Council chair synthesis failed for ${persona.id}; falling back to top candidate.`, e);
+        finalResult = usable[0].parsed;
+      }
+
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: persona.id,
+        artifact_type: 'council_chair_final',
+        backend_provider: council.chair.provider,
+        backend_model: council.chair.model,
+        content_json: JSON.stringify(finalResult),
+      } as any);
+
+      sendMessage({ type: 'complete', persona_id: persona.id, result: finalResult });
+
+      await db.updateAnalysis(analysis.id, {
+        status: 'completed',
+        analysis_provider: council.chair.provider,
+        analysis_model: council.chair.model,
+        error_message: null as any,
+        score_json: JSON.stringify(finalResult.dimension_scores || {}),
+        top_issues_json: JSON.stringify(finalResult.top_3_issues || []),
+        rewritten_suggestions_json: JSON.stringify({
+          what_works_well: finalResult.what_works_well || [],
+          overall_verdict: finalResult.overall_verdict || '',
+          rewritten_headline: finalResult.rewritten_headline_suggestion || '',
+        }),
+        completed_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      const err = String(e);
+      console.error(`Council analysis failed for persona ${persona.id}:`, err);
+      sendMessage({ type: 'error', persona_id: persona.id, error: err });
+
+      const analyses = await db.getAnalyses(sessionId);
+      const analysis = analyses.find(a => a.persona_id === persona.id);
+      if (analysis) {
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: err,
+          completed_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  private buildDiscussionCritiquePrompt(persona: any): string {
+    const profile = JSON.parse(persona.profile_json);
+    return `You are ${profile.name}, a ${profile.role}.
+
+You will be given:
+- a candidate analysis JSON produced by another variant of the same role
+
+TASK:
+Critique the candidate analysis from your unique agenda and constraints. Focus on:
+- missing risks or missing business context
+- weak evidence or generic claims
+- rubric misses (relevance, credibility, differentiation, actionability, trust, language fit)
+- improvements to make it more specific and useful
+
+OUTPUT FORMAT:
+Respond with ONLY valid JSON:
+{
+  "key_disagreements": ["..."],
+  "errors_or_weaknesses": ["..."],
+  "improvements": ["..."],
+  "overall_assessment": "...",
+  "confidence": 0.7
+}`;
+  }
+
+  private buildDiscussionChairPrompt(role: string): string {
+    return `You are the chairman synthesizing a single final analysis for a focus-group discussion among multiple variants of the SAME job role: ${role}.
+
+You will be given:
+- candidates: an array of variant analyses (JSON)
+- critiques: an array of cross-critiques (JSON)
+
+TASK:
+1) Produce ONE final Roundtable analysis JSON (same shape as standard Roundtable output).
+2) Produce dissent notes capturing the main disagreements and which variant(s) raised them.
+
+OUTPUT FORMAT:
+Respond with ONLY valid JSON:
+{
+  "final": { ...Roundtable JSON... },
+  "dissents": [
+    {"who": ["variant_persona_id"], "point": "...", "why_not_in_final": "..."}
+  ]
+}`;
+  }
+
+  private async runRoleVariantDiscussionSynthesis(
+    sessionId: string,
+    variants: any[],
+    personaGroupId: string,
+    documentText: string,
+    sendMessage: (msg: any) => void,
+    db: D1Client,
+    cfg: { variantBackend: Backend; chairBackend: Backend }
+  ): Promise<void> {
+    console.log(`Starting discussion synthesis for session ${sessionId}: variants=${variants.length}, group=${personaGroupId || 'n/a'}`);
+
+    const analyses = await db.getAnalyses(sessionId);
+    const byPersona: Record<string, any> = {};
+    for (const a of analyses) {
+      if (!a.persona_id) continue;
+      byPersona[a.persona_id] = a;
+    }
+
+    const candidates: any[] = [];
+    for (const v of variants) {
+      const a = byPersona[v.id];
+      if (!a || a.status !== 'completed') continue;
+
+      let score: any = null;
+      let issues: any = null;
+      let suggestions: any = null;
+      try { score = a.score_json ? (typeof a.score_json === 'string' ? JSON.parse(a.score_json) : a.score_json) : null; } catch {}
+      try { issues = a.top_issues_json ? (typeof a.top_issues_json === 'string' ? JSON.parse(a.top_issues_json) : a.top_issues_json) : null; } catch {}
+      try { suggestions = a.rewritten_suggestions_json ? (typeof a.rewritten_suggestions_json === 'string' ? JSON.parse(a.rewritten_suggestions_json) : a.rewritten_suggestions_json) : null; } catch {}
+
+      candidates.push({
+        persona_id: v.id,
+        name: v.name,
+        role: v.role,
+        dimension_scores: score,
+        top_3_issues: issues,
+        feedback: suggestions,
+      });
+    }
+
+    if (candidates.length === 0) {
+      throw new Error('No completed variant analyses available for discussion synthesis');
+    }
+
+    // Cross critiques (all-against-all)
+    const critiques: any[] = [];
+    const MAX_TARGET_JSON_CHARS = 6000;
+
+    for (const from of variants) {
+      const fromCandidate = candidates.find((c) => c.persona_id === from.id);
+      if (!fromCandidate) continue;
+
+      for (const target of variants) {
+        if (target.id === from.id) continue;
+        const targetCandidate = candidates.find((c) => c.persona_id === target.id);
+        if (!targetCandidate) continue;
+
+        try {
+          const critiqueText = await this.clibridgeCompleteText({
+            provider: cfg.variantBackend.provider,
+            model: cfg.variantBackend.model,
+            systemPrompt: this.buildDiscussionCritiquePrompt(from),
+            messages: [{
+              role: 'user',
+              content: JSON.stringify({
+                target_persona_id: target.id,
+                target_analysis: targetCandidate,
+              }).slice(0, MAX_TARGET_JSON_CHARS),
+            }],
+          });
+
+          const critiqueJson = JSON.parse(critiqueText);
+          const payload = {
+            from_persona_id: from.id,
+            target_persona_id: target.id,
+            critique: critiqueJson,
+          };
+          critiques.push(payload);
+          await db.createAnalysisArtifact({
+            session_id: sessionId,
+            persona_id: from.id,
+            artifact_type: 'discussion_critique',
+            backend_provider: cfg.variantBackend.provider,
+            backend_model: cfg.variantBackend.model,
+            content_json: JSON.stringify(payload),
+          } as any);
+        } catch (e) {
+          const payload = {
+            from_persona_id: from.id,
+            target_persona_id: target.id,
+            error: String(e),
+          };
+          critiques.push(payload);
+          await db.createAnalysisArtifact({
+            session_id: sessionId,
+            persona_id: from.id,
+            artifact_type: 'discussion_critique',
+            backend_provider: cfg.variantBackend.provider,
+            backend_model: cfg.variantBackend.model,
+            content_json: JSON.stringify(payload),
+          } as any);
+        }
+      }
+    }
+
+    // Chair synthesis
+    const role = String(variants[0]?.role || 'Role').trim() || 'Role';
+    let chairJson: any;
+    try {
+      const chairText = await this.clibridgeCompleteText({
+        provider: cfg.chairBackend.provider,
+        model: cfg.chairBackend.model,
+        systemPrompt: this.buildDiscussionChairPrompt(role),
+        messages: [{
+          role: 'user',
+          content: JSON.stringify({
+            persona_group_id: personaGroupId || null,
+            candidates,
+            critiques,
+            doc_excerpt: documentText.slice(0, 2000),
+          }),
+        }],
+      });
+      chairJson = JSON.parse(chairText);
+    } catch (e) {
+      const err = String(e);
+      console.error('Discussion chair synthesis failed:', err);
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: cfg.chairBackend.provider,
+        backend_model: cfg.chairBackend.model,
+        content_json: JSON.stringify({ error: err }),
+      } as any);
+      throw e;
+    }
+
+    const finalObj = chairJson?.final;
+    const dissents = Array.isArray(chairJson?.dissents) ? chairJson.dissents : [];
+    if (!finalObj || typeof finalObj !== 'object') {
+      throw new Error('Discussion chair did not return a valid final object');
+    }
+
+    // Normalize final into the standard Roundtable shape (using first variant as schema anchor).
+    const normalizedFinal = this.normalizeResult(finalObj, variants[0]);
+
+    await db.createAnalysisArtifact({
+      session_id: sessionId,
+      persona_id: 'discussion',
+      artifact_type: 'discussion_chair_final',
+      backend_provider: cfg.chairBackend.provider,
+      backend_model: cfg.chairBackend.model,
+      content_json: JSON.stringify({ persona_group_id: personaGroupId || null, final: normalizedFinal }),
+    } as any);
+
+    await db.createAnalysisArtifact({
+      session_id: sessionId,
+      persona_id: 'discussion',
+      artifact_type: 'discussion_dissents',
+      backend_provider: cfg.chairBackend.provider,
+      backend_model: cfg.chairBackend.model,
+      content_json: JSON.stringify({ persona_group_id: personaGroupId || null, dissents }),
+    } as any);
+
+    sendMessage({ type: 'complete', persona_id: 'discussion', result: { final: normalizedFinal, dissents } });
+  }
 
   private async retryPersonaAnalysis(sessionId: string, personaId: string): Promise<void> {
     const db = new D1Client(this.env.DB);

@@ -54,6 +54,9 @@ function SessionDetailContent() {
   const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [discussionFinal, setDiscussionFinal] = useState<any | null>(null);
+  const [discussionDissents, setDiscussionDissents] = useState<any[] | null>(null);
+  const [discussionLoading, setDiscussionLoading] = useState(false);
 
   // Load personas to get names
   const loadPersonas = useCallback(async () => {
@@ -111,6 +114,49 @@ function SessionDetailContent() {
     loadPersonas();
     loadSession();
   }, [loadPersonas, loadSession]);
+
+  useEffect(() => {
+    (async () => {
+      if (!sessionId || !session) return;
+      if (session.workflow !== 'role_variant_discussion') return;
+
+      try {
+        setDiscussionLoading(true);
+        const [finalResp, dissentResp] = await Promise.all([
+          sessionApi.getArtifacts(sessionId, { artifact_type: 'discussion_chair_final' }),
+          sessionApi.getArtifacts(sessionId, { artifact_type: 'discussion_dissents' }),
+        ]);
+
+        const parseContent = (a: any) => {
+          const raw = a?.content_json;
+          if (raw == null) return null;
+          if (typeof raw === 'object') return raw;
+          if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return raw; }
+          }
+          return raw;
+        };
+
+        const finalArtifact = Array.isArray(finalResp?.artifacts) ? finalResp.artifacts[0] : null;
+        const dissentArtifact = Array.isArray(dissentResp?.artifacts) ? dissentResp.artifacts[0] : null;
+
+        const finalPayload = finalArtifact ? parseContent(finalArtifact) : null;
+        const dissentsPayload = dissentArtifact ? parseContent(dissentArtifact) : null;
+
+        const finalObj = finalPayload?.final || finalPayload?.result || finalPayload || null;
+        const dissentsArr = Array.isArray(dissentsPayload?.dissents)
+          ? dissentsPayload.dissents
+          : (Array.isArray(dissentsPayload) ? dissentsPayload : null);
+
+        setDiscussionFinal(finalObj && typeof finalObj === 'object' ? finalObj : null);
+        setDiscussionDissents(dissentsArr);
+      } catch (e) {
+        console.error('Failed to load discussion artifacts:', e);
+      } finally {
+        setDiscussionLoading(false);
+      }
+    })();
+  }, [sessionId, session]);
 
   // Trigger analysis when session is uploaded
   useEffect(() => {
@@ -632,6 +678,121 @@ function SessionDetailContent() {
       )}
 
       {/* Analyses */}
+      {session.workflow === 'role_variant_discussion' && (
+        <div className="mb-6 bg-white border rounded-lg overflow-hidden">
+          <div className="p-6 border-b bg-gray-50">
+            <h3 className="text-lg font-semibold text-gray-900">Chairman Synthesis</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              The final output below is synthesized from the role-variant discussion. Variant analyses are shown afterward.
+            </p>
+          </div>
+
+          <div className="p-6">
+            {discussionLoading && (
+              <div className="text-sm text-gray-500">Loading discussion synthesis...</div>
+            )}
+
+            {!discussionLoading && !discussionFinal && session.status === 'analyzing' && (
+              <div className="text-sm text-gray-500">Waiting for chairman synthesis...</div>
+            )}
+
+            {!discussionLoading && !discussionFinal && session.status !== 'analyzing' && (
+              <div className="text-sm text-gray-500">No chairman synthesis found for this session.</div>
+            )}
+
+            {discussionFinal && (
+              <div className="space-y-6">
+                {discussionFinal.dimension_scores && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900 mb-3">Dimension Scores</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {Object.entries(discussionFinal.dimension_scores).map(([key, value]: [string, any]) => (
+                        <div key={key} className="bg-white p-3 rounded border">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs text-gray-600 capitalize">
+                              {key.replace('_', ' ')}
+                            </span>
+                            <span className="text-lg font-bold text-blue-600">
+                              {value?.score || 0}/10
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500">{value?.commentary || ''}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {Array.isArray(discussionFinal.top_3_issues) && discussionFinal.top_3_issues.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900 mb-3">Top Issues</h4>
+                    <div className="space-y-3">
+                      {discussionFinal.top_3_issues.map((issue: any, idx: number) => (
+                        <div key={idx} className="bg-white p-4 rounded border">
+                          <p className="font-medium text-red-700 mb-2">{issue?.issue || ''}</p>
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Original:</span> &ldquo;{issue?.specific_example_from_content || ''}&rdquo;
+                          </div>
+                          <div className="text-sm text-green-700">
+                            <span className="font-medium">Suggested:</span> &ldquo;{issue?.suggested_rewrite || ''}&rdquo;
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white p-4 rounded border">
+                  {Array.isArray(discussionFinal.what_works_well) && discussionFinal.what_works_well.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-sm font-medium text-green-700 mb-1">What Works Well:</p>
+                      <ul className="list-disc list-inside text-sm text-gray-600">
+                        {discussionFinal.what_works_well.map((item: string, idx: number) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-gray-900 mb-1">Overall Verdict:</p>
+                    <p className="text-sm text-gray-600">{discussionFinal.overall_verdict || ''}</p>
+                  </div>
+                  {discussionFinal.rewritten_headline_suggestion && (
+                    <div>
+                      <p className="text-sm font-medium text-blue-700 mb-1">Rewritten Headline Suggestion:</p>
+                      <p className="text-sm text-gray-600 italic">&ldquo;{discussionFinal.rewritten_headline_suggestion}&rdquo;</p>
+                    </div>
+                  )}
+                </div>
+
+                {Array.isArray(discussionDissents) && discussionDissents.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900 mb-3">Dissent Notes</h4>
+                    <div className="space-y-2">
+                      {discussionDissents.map((d: any, idx: number) => (
+                        <div key={idx} className="p-3 rounded border bg-gray-50 text-sm text-gray-700">
+                          <div className="font-medium">{d?.point || 'Dissent'}</div>
+                          {Array.isArray(d?.who) && d.who.length > 0 && (
+                            <div className="text-xs text-gray-500 mt-1 font-mono">
+                              {d.who.join(', ')}
+                            </div>
+                          )}
+                          {d?.why_not_in_final && (
+                            <div className="text-xs text-gray-600 mt-1">
+                              {d.why_not_in_final}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
         {session.analyses?.map((analysis) => (
           <div

@@ -24,6 +24,8 @@ export interface Session {
   status: 'uploaded' | 'analyzing' | 'completed' | 'failed' | 'partial';
   analysis_provider?: string;
   analysis_model?: string;
+  workflow?: string;
+  analysis_config_json?: string;
   error_message?: string;
   created_at: string;
   updated_at: string;
@@ -66,6 +68,35 @@ export interface Setting {
   updated_at: string;
 }
 
+export interface PersonaGroup {
+  id: string;
+  owner_email: string;
+  group_type: string;
+  role_key: string;
+  name: string;
+  description?: string;
+  base_persona_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonaGroupMember {
+  group_id: string;
+  persona_id: string;
+  created_at: string;
+}
+
+export interface AnalysisArtifact {
+  id: number;
+  session_id: string;
+  persona_id: string;
+  artifact_type: string;
+  backend_provider?: string;
+  backend_model?: string;
+  content_json: string;
+  created_at: string;
+}
+
 export interface SessionWithAnalyses extends Session {
   analyses?: Analysis[];
 }
@@ -102,6 +133,23 @@ export class D1Client {
     await ensureColumn('analyses', 'analysis_model');
   }
 
+  private async ensureSessionWorkflowColumns(): Promise<void> {
+    const ensureColumn = async (column: 'workflow' | 'analysis_config_json') => {
+      const exists = await this.columnExists('sessions', column);
+      if (exists) return;
+      try {
+        await this.db.prepare(`ALTER TABLE sessions ADD COLUMN ${column} TEXT`).run();
+      } catch (e) {
+        const msg = String(e);
+        if (msg.toLowerCase().includes('duplicate column')) return;
+        throw e;
+      }
+    };
+
+    await ensureColumn('workflow');
+    await ensureColumn('analysis_config_json');
+  }
+
   private async ensureSessionSharesSchema(): Promise<void> {
     // Idempotent; safe to call from request paths.
     await this.db.prepare(
@@ -116,6 +164,57 @@ export class D1Client {
 
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_email ON session_shares(email)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id)').run();
+  }
+
+  private async ensurePersonaGroupsSchema(): Promise<void> {
+    await this.db.prepare(
+      `CREATE TABLE IF NOT EXISTS persona_groups (
+        id TEXT PRIMARY KEY,
+        owner_email TEXT NOT NULL,
+        group_type TEXT NOT NULL,
+        role_key TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        base_persona_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`
+    ).run();
+
+    await this.db.prepare(
+      `CREATE TABLE IF NOT EXISTS persona_group_members (
+        group_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (group_id, persona_id),
+        FOREIGN KEY (group_id) REFERENCES persona_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (persona_id) REFERENCES personas(id) ON DELETE CASCADE
+      )`
+    ).run();
+
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_groups_owner ON persona_groups(owner_email, created_at DESC)').run();
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_group_members_group ON persona_group_members(group_id)').run();
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_group_members_persona ON persona_group_members(persona_id)').run();
+  }
+
+  private async ensureAnalysisArtifactsSchema(): Promise<void> {
+    await this.db.prepare(
+      `CREATE TABLE IF NOT EXISTS analysis_artifacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        backend_provider TEXT,
+        backend_model TEXT,
+        content_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )`
+    ).run();
+
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_session ON analysis_artifacts(session_id)').run();
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_session_persona ON analysis_artifacts(session_id, persona_id)').run();
+    await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_type ON analysis_artifacts(artifact_type)').run();
   }
 
   private async ensureSettingsSchema(): Promise<void> {
@@ -242,6 +341,13 @@ export class D1Client {
       await this.ensureAnalysisBackendColumns();
     }
 
+    const includeWorkflow =
+      Object.prototype.hasOwnProperty.call(session, 'workflow') ||
+      Object.prototype.hasOwnProperty.call(session, 'analysis_config_json');
+    if (includeWorkflow) {
+      await this.ensureSessionWorkflowColumns();
+    }
+
     const columns = [
       'id',
       'user_email',
@@ -252,6 +358,7 @@ export class D1Client {
       'selected_persona_ids',
       'status',
       ...(includeBackend ? ['analysis_provider', 'analysis_model'] : []),
+      ...(includeWorkflow ? ['workflow', 'analysis_config_json'] : []),
       'created_at',
       'updated_at',
     ];
@@ -274,6 +381,11 @@ export class D1Client {
       values.push((session as any).analysis_model || null);
     }
 
+    if (includeWorkflow) {
+      values.push((session as any).workflow || null);
+      values.push((session as any).analysis_config_json || null);
+    }
+
     values.push(now, now);
 
     await this.db.prepare(
@@ -289,6 +401,10 @@ export class D1Client {
 
     if (Object.prototype.hasOwnProperty.call(updates, 'analysis_provider') || Object.prototype.hasOwnProperty.call(updates, 'analysis_model')) {
       await this.ensureAnalysisBackendColumns();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'workflow') || Object.prototype.hasOwnProperty.call(updates, 'analysis_config_json')) {
+      await this.ensureSessionWorkflowColumns();
     }
     
     const setClause = fields.map(f => `${f} = ?`).join(', ');
@@ -377,5 +493,98 @@ export class D1Client {
     for (const [key, value] of entries) {
       await this.upsertSetting(key, value);
     }
+  }
+
+  // Persona group operations
+  async createPersonaGroup(group: Omit<PersonaGroup, 'created_at' | 'updated_at'>): Promise<void> {
+    await this.ensurePersonaGroupsSchema();
+    const now = new Date().toISOString();
+    await this.db.prepare(
+      `INSERT INTO persona_groups (id, owner_email, group_type, role_key, name, description, base_persona_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      group.id,
+      group.owner_email,
+      group.group_type,
+      group.role_key,
+      group.name,
+      (group as any).description || null,
+      (group as any).base_persona_id || null,
+      now,
+      now
+    ).run();
+  }
+
+  async listPersonaGroups(ownerEmail: string): Promise<PersonaGroup[]> {
+    await this.ensurePersonaGroupsSchema();
+    const result = await this.db.prepare(
+      'SELECT * FROM persona_groups WHERE owner_email = ? ORDER BY created_at DESC'
+    ).bind(ownerEmail).all<PersonaGroup>();
+    return result.results || [];
+  }
+
+  async getPersonaGroup(id: string): Promise<PersonaGroup | null> {
+    await this.ensurePersonaGroupsSchema();
+    const result = await this.db.prepare('SELECT * FROM persona_groups WHERE id = ?').bind(id).first<PersonaGroup>();
+    return result || null;
+  }
+
+  async addPersonaGroupMembers(groupId: string, personaIds: string[]): Promise<void> {
+    await this.ensurePersonaGroupsSchema();
+    const now = new Date().toISOString();
+    for (const personaId of personaIds) {
+      if (!personaId) continue;
+      await this.db.prepare(
+        'INSERT OR IGNORE INTO persona_group_members (group_id, persona_id, created_at) VALUES (?, ?, ?)'
+      ).bind(groupId, personaId, now).run();
+    }
+  }
+
+  async getPersonaGroupMembers(groupId: string): Promise<PersonaGroupMember[]> {
+    await this.ensurePersonaGroupsSchema();
+    const result = await this.db.prepare(
+      'SELECT * FROM persona_group_members WHERE group_id = ? ORDER BY persona_id'
+    ).bind(groupId).all<PersonaGroupMember>();
+    return result.results || [];
+  }
+
+  // Analysis artifacts operations
+  async createAnalysisArtifact(artifact: Omit<AnalysisArtifact, 'id' | 'created_at'>): Promise<number> {
+    await this.ensureAnalysisArtifactsSchema();
+    const now = new Date().toISOString();
+    const result = await this.db.prepare(
+      `INSERT INTO analysis_artifacts (session_id, persona_id, artifact_type, backend_provider, backend_model, content_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      artifact.session_id,
+      artifact.persona_id,
+      artifact.artifact_type,
+      (artifact as any).backend_provider || null,
+      (artifact as any).backend_model || null,
+      artifact.content_json,
+      now
+    ).run();
+    return result.meta?.last_row_id || 0;
+  }
+
+  async getAnalysisArtifacts(sessionId: string, filters?: { persona_id?: string; artifact_type?: string }): Promise<AnalysisArtifact[]> {
+    await this.ensureAnalysisArtifactsSchema();
+    const where: string[] = ['session_id = ?'];
+    const binds: any[] = [sessionId];
+
+    const personaId = (filters?.persona_id || '').trim();
+    const artifactType = (filters?.artifact_type || '').trim();
+    if (personaId) {
+      where.push('persona_id = ?');
+      binds.push(personaId);
+    }
+    if (artifactType) {
+      where.push('artifact_type = ?');
+      binds.push(artifactType);
+    }
+
+    const sql = `SELECT * FROM analysis_artifacts WHERE ${where.join(' AND ')} ORDER BY id`;
+    const result = await this.db.prepare(sql).bind(...binds).all<AnalysisArtifact>();
+    return result.results || [];
   }
 }

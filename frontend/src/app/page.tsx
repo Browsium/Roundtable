@@ -24,6 +24,8 @@ export default function Home() {
   const [analysisProvider, setAnalysisProvider] = useState(DEFAULT_ANALYSIS_PROVIDER);
   const [analysisModel, setAnalysisModel] = useState(DEFAULT_ANALYSIS_MODEL);
   const [analysisPreset, setAnalysisPreset] = useState('claude-sonnet');
+  const [useCouncil, setUseCouncil] = useState(true);
+  const [councilMemberIds, setCouncilMemberIds] = useState<string[]>(['claude-sonnet']);
 
   // Load personas on mount
   const loadPersonas = useCallback(async () => {
@@ -44,7 +46,11 @@ export default function Home() {
         const model = (data.analysis_model || DEFAULT_ANALYSIS_MODEL).trim();
         setAnalysisProvider(provider);
         setAnalysisModel(model);
-        setAnalysisPreset(inferPresetId(provider, model));
+        const presetId = inferPresetId(provider, model);
+        setAnalysisPreset(presetId);
+        if (presetId !== 'custom') {
+          setCouncilMemberIds([presetId]);
+        }
       } catch {
         // If settings are unreachable, keep defaults.
       }
@@ -105,6 +111,16 @@ export default function Home() {
     if (id === 'custom') return;
     setAnalysisProvider(preset.provider);
     setAnalysisModel(preset.model);
+
+    // If council is enabled and the member set is empty, default members to chair preset.
+    setCouncilMemberIds((prev) => (prev.length === 0 ? [id] : prev));
+  };
+
+  const toggleCouncilMember = (id: string) => {
+    setCouncilMemberIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [...prev, id];
+    });
   };
 
  const handleStartAnalysis = async () => {
@@ -120,6 +136,38 @@ export default function Home() {
       // Get file extension
       const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
 
+      const chairBackend = {
+        provider: analysisProvider.trim(),
+        model: analysisModel.trim(),
+      };
+
+      let workflow: string | undefined = undefined;
+      let analysisConfig: any | undefined = undefined;
+      if (useCouncil) {
+        workflow = 'roundtable_council';
+
+        const members = councilMemberIds
+          .map((pid) => MODEL_PRESETS.find((p) => p.id === pid))
+          .filter((p) => !!p && !p!.disabled && p!.id !== 'custom')
+          .map((p) => ({ provider: p!.provider, model: p!.model }));
+
+        if (members.length === 0) {
+          setError('Select at least one council member model');
+          setLoading(false);
+          return;
+        }
+
+        analysisConfig = {
+          council: {
+            members,
+            reviewer_backend: chairBackend,
+            chair_backend: chairBackend,
+          },
+        };
+      } else {
+        workflow = 'roundtable_standard';
+      }
+
       // Create session (metadata only, no file)
       const session = await sessionApi.create(
         file.name,
@@ -127,7 +175,9 @@ export default function Home() {
         fileExtension,
         selectedPersonas,
         analysisProvider.trim(),
-        analysisModel.trim()
+        analysisModel.trim(),
+        workflow,
+        analysisConfig,
       );
 
       // Upload file to R2
@@ -277,6 +327,49 @@ export default function Home() {
                   className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
                 />
               </div>
+            </div>
+
+            <div className="mt-4 border-t pt-4">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Council Mode</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    When enabled, each persona is run across multiple models and a chairman synthesizes one final answer per persona.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={useCouncil}
+                    onChange={(e) => setUseCouncil(e.target.checked)}
+                  />
+                  Enable council
+                </label>
+              </div>
+
+              {useCouncil && (
+                <div className="mt-3">
+                  <p className="text-sm font-medium text-gray-700 mb-2">Council members</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                    {MODEL_PRESETS.filter(p => !p.disabled && p.id !== 'custom').map((p) => (
+                      <label
+                        key={p.id}
+                        className="inline-flex items-center gap-2 px-3 py-2 border rounded-md bg-white text-sm cursor-pointer hover:bg-gray-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={councilMemberIds.includes(p.id)}
+                          onChange={() => toggleCouncilMember(p.id)}
+                        />
+                        <span>{p.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Chairman uses the selected provider/model above. Reviewer defaults to chairman.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

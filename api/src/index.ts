@@ -5,6 +5,7 @@ import { personaRoutes } from './routes/personas';
 import { sessionRoutes } from './routes/sessions';
 import { r2Routes } from './routes/r2';
 import { settingsRoutes } from './routes/settings';
+import { personaGroupRoutes } from './routes/persona-groups';
 import { D1Client } from './lib/d1';
 import pkg from '../package.json';
 
@@ -44,6 +45,7 @@ app.get('/version', (c) => c.json({
 
 // Routes
 app.route('/personas', personaRoutes);
+app.route('/persona-groups', personaGroupRoutes);
 app.route('/sessions', sessionRoutes);
 app.route('/r2', r2Routes);
 app.route('/settings', settingsRoutes);

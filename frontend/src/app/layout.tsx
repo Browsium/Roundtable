@@ -30,6 +30,9 @@ export default function RootLayout({
               <Link href="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
                 New Analysis
               </Link>
+              <Link href="/discussion" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                Discussion
+              </Link>
               <Link href="/sessions" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
                 History
               </Link>

@@ -207,6 +207,32 @@ async function deployPersona(apiUrl: string, personaId: string, options?: { user
   }, options);
 }
 
+async function listPersonaGroups(apiUrl: string, options?: { userEmail?: string }): Promise<any[]> {
+  return await fetchJson<any[]>(apiUrl, '/persona-groups', undefined, options);
+}
+
+async function createPersonaGroup(apiUrl: string, data: { role_key: string; name: string; description?: string; base_persona_id?: string }, options?: { userEmail?: string }): Promise<any> {
+  return await fetchJson<any>(apiUrl, '/persona-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }, options);
+}
+
+async function getPersonaGroup(apiUrl: string, groupId: string, options?: { userEmail?: string }): Promise<any> {
+  if (!groupId) throw new Error('persona_group_id is required');
+  return await fetchJson<any>(apiUrl, `/persona-groups/${encodeURIComponent(groupId)}`, undefined, options);
+}
+
+async function generatePersonaGroupVariants(apiUrl: string, groupId: string, data: { count: number; base_persona_id?: string; seed_constraints?: any; generator_provider?: string; generator_model?: string }, options?: { userEmail?: string }): Promise<any> {
+  if (!groupId) throw new Error('persona_group_id is required');
+  return await fetchJson<any>(apiUrl, `/persona-groups/${encodeURIComponent(groupId)}/generate-variants`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }, options);
+}
+
 async function getSession(apiUrl: string, sessionId: string, options?: { userEmail?: string }): Promise<Session> {
   return await fetchJson<Session>(apiUrl, `/sessions/${encodeURIComponent(sessionId)}`, undefined, options);
 }
@@ -338,6 +364,151 @@ async function focusGroup(
       recommendations: exportModel.recommendations,
     },
     analyses: exportModel.analyses,
+  };
+}
+
+async function focusGroupDiscussion(
+  args: JsonObject,
+  mode: RoundtableMcpMode,
+  options?: { userEmail?: string },
+): Promise<JsonObject> {
+  const apiUrl = (typeof args.api_url === 'string' && args.api_url.trim()) ? args.api_url.trim() : DEFAULT_API_URL;
+
+  const { filename, bytes, contentType } = await readInputBytes(args, mode);
+  const fileExtension = extFromFilename(filename);
+
+  const variantCount = typeof args.variant_count === 'number' && Number.isFinite(args.variant_count)
+    ? Math.max(2, Math.min(8, Math.floor(args.variant_count)))
+    : 4;
+
+  const basePersonaId = typeof args.base_persona_id === 'string' ? args.base_persona_id.trim() : '';
+  const personaGroupIdArg = typeof args.persona_group_id === 'string' ? args.persona_group_id.trim() : '';
+
+  const variantProvider = typeof args.variant_provider === 'string' ? args.variant_provider.trim() : '';
+  const variantModel = typeof args.variant_model === 'string' ? args.variant_model.trim() : '';
+  const chairProvider = typeof args.chair_provider === 'string' ? args.chair_provider.trim() : '';
+  const chairModel = typeof args.chair_model === 'string' ? args.chair_model.trim() : '';
+
+  // Defaults to configured analysis backend.
+  const analysisProvider = variantProvider || (typeof args.analysis_provider === 'string' ? args.analysis_provider.trim() : '');
+  const analysisModel = variantModel || (typeof args.analysis_model === 'string' ? args.analysis_model.trim() : '');
+  const hasBackendOverride = !!analysisProvider || !!analysisModel;
+  if (hasBackendOverride && (!analysisProvider || !analysisModel)) {
+    throw new Error('analysis_provider and analysis_model must be provided together (both non-empty).');
+  }
+
+  // Use chair backend if specified; else use variant backend; else let server defaults apply.
+  const chairBackend = (chairProvider && chairModel)
+    ? { provider: chairProvider, model: chairModel }
+    : (analysisProvider && analysisModel ? { provider: analysisProvider, model: analysisModel } : null);
+
+  let groupId = personaGroupIdArg;
+  let variantPersonaIds: string[] = [];
+
+  if (groupId) {
+    const group = await getPersonaGroup(apiUrl, groupId, options);
+    const members = Array.isArray(group?.members) ? group.members : [];
+    variantPersonaIds = members.map((p: any) => String(p?.id || '')).filter(Boolean);
+  } else {
+    if (!basePersonaId) throw new Error('Provide persona_group_id OR base_persona_id');
+    const roleKey = basePersonaId.split('_')[0]?.trim().toLowerCase() || 'role';
+
+    const created = await createPersonaGroup(apiUrl, {
+      role_key: roleKey,
+      name: `${roleKey} discussion variants`,
+      base_persona_id: basePersonaId,
+    }, options);
+
+    groupId = String(created?.id || '').trim();
+    if (!groupId) throw new Error('Failed to create persona group');
+
+    const gen = await generatePersonaGroupVariants(apiUrl, groupId, {
+      count: variantCount,
+      base_persona_id: basePersonaId,
+      generator_provider: analysisProvider || undefined,
+      generator_model: analysisModel || undefined,
+      seed_constraints: args.seed_constraints,
+    }, options);
+
+    variantPersonaIds = Array.isArray(gen?.created_persona_ids) ? gen.created_persona_ids : [];
+  }
+
+  if (variantPersonaIds.length < 2) {
+    throw new Error(`Need at least 2 variants; got ${variantPersonaIds.length}`);
+  }
+
+  const createSessionBody: any = {
+    file_name: filename,
+    file_size_bytes: bytes.byteLength,
+    file_extension: fileExtension,
+    selected_persona_ids: variantPersonaIds,
+    workflow: 'role_variant_discussion',
+  };
+  if (analysisProvider && analysisModel) {
+    createSessionBody.analysis_provider = analysisProvider;
+    createSessionBody.analysis_model = analysisModel;
+  }
+
+  createSessionBody.analysis_config_json = {
+    discussion: {
+      persona_group_id: groupId,
+      variant_backend: (analysisProvider && analysisModel) ? { provider: analysisProvider, model: analysisModel } : null,
+      chair_backend: chairBackend,
+      critique_mode: 'all_against_all',
+    },
+  };
+
+  const session = await fetchJson<any>(apiUrl, '/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(createSessionBody),
+  }, options);
+
+  const sessionId = String(session?.id || '').trim();
+  if (!sessionId) throw new Error('Session creation failed: missing id in response');
+
+  // Upload bytes
+  const uploadPath = `/r2/upload/${encodeURIComponent(sessionId)}/${encodeURIComponent(filename)}`;
+  await fetchJson<any>(apiUrl, uploadPath, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: toArrayBuffer(bytes),
+  }, options);
+
+  // Trigger analysis
+  await fetchJson<any>(apiUrl, `/sessions/${encodeURIComponent(sessionId)}/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  }, options);
+
+  const wait = typeof args.wait === 'boolean' ? args.wait : true;
+  if (!wait) {
+    return { session_id: sessionId, api_url: apiUrl, status: 'started', persona_group_id: groupId, variant_persona_ids: variantPersonaIds };
+  }
+
+  const timeoutSeconds = typeof args.timeout_seconds === 'number' && Number.isFinite(args.timeout_seconds)
+    ? Math.max(30, Math.floor(args.timeout_seconds))
+    : 900;
+  const pollIntervalSeconds = typeof args.poll_interval_seconds === 'number' && Number.isFinite(args.poll_interval_seconds)
+    ? Math.max(1, Math.floor(args.poll_interval_seconds))
+    : 2;
+
+  const finalSession = await pollSessionUntilDone(apiUrl, sessionId, timeoutSeconds, pollIntervalSeconds, options);
+
+  // Fetch chair artifacts
+  const chairFinal = await fetchJson<any>(apiUrl, `/sessions/${encodeURIComponent(sessionId)}/artifacts?artifact_type=discussion_chair_final`, undefined, options);
+  const dissents = await fetchJson<any>(apiUrl, `/sessions/${encodeURIComponent(sessionId)}/artifacts?artifact_type=discussion_dissents`, undefined, options);
+
+  return {
+    session_id: sessionId,
+    api_url: apiUrl,
+    status: finalSession.status,
+    persona_group_id: groupId,
+    variant_persona_ids: variantPersonaIds,
+    chair_final_artifacts: chairFinal?.artifacts || [],
+    dissent_artifacts: dissents?.artifacts || [],
+    session: finalSession,
   };
 }
 
@@ -513,6 +684,31 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
           },
         },
         {
+          name: 'roundtable.focus_group_discussion',
+          description: 'Run a single-role variant discussion (cross-critique + chairman synthesis). Variants can be generated and saved as personas in a persona-group.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              api_url: { type: 'string', description: `Override API URL (default: ${DEFAULT_API_URL})` },
+              file_path: { type: 'string', description: 'Path to a local file to analyze (local stdio only).' },
+              file_base64: { type: 'string', description: 'Base64-encoded file bytes to analyze (remote-friendly).' },
+              content: { type: 'string', description: 'Raw content to analyze (if file_path not provided).' },
+              filename: { type: 'string', description: 'Filename to use when content or file_base64 is provided (e.g. draft.md).' },
+              persona_group_id: { type: 'string', description: 'Existing persona group id to use (optional).' },
+              base_persona_id: { type: 'string', description: 'Base persona id to generate variants from (required if persona_group_id not provided).' },
+              variant_count: { type: 'number', description: 'Number of variants to generate (default: 4, max: 8).' },
+              seed_constraints: { type: 'object', description: 'Optional constraints passed to the variant generator.' },
+              analysis_provider: { type: 'string', description: 'Variant backend provider (requires analysis_model).' },
+              analysis_model: { type: 'string', description: 'Variant backend model (requires analysis_provider).' },
+              chair_provider: { type: 'string', description: 'Chairman backend provider (requires chair_model).' },
+              chair_model: { type: 'string', description: 'Chairman backend model (requires chair_provider).' },
+              wait: { type: 'boolean', description: 'If true, wait for completion and return results (default: true).' },
+              timeout_seconds: { type: 'number', description: 'Max seconds to wait when wait=true (default: 900).' },
+              poll_interval_seconds: { type: 'number', description: 'Polling interval in seconds (default: 2).' },
+            },
+          },
+        },
+        {
           name: 'roundtable.get_session',
           description: 'Fetch a Roundtable session (including per-persona analyses).',
           inputSchema: {
@@ -588,6 +784,11 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
+      if (name === 'roundtable.focus_group_discussion') {
+        const result = await focusGroupDiscussion(args, options.mode, { userEmail: options.userEmail });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
       if (name === 'roundtable.export_session') {
         const result = await exportSession(args, options.mode, { userEmail: options.userEmail });
         const content: any[] = [{ type: 'text', text: JSON.stringify(result, null, 2) }];
@@ -630,4 +831,3 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
 
   return server;
 }
-

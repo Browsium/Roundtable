@@ -1,4 +1,5 @@
 import type { Persona, Session, Analysis } from './types';
+import type { AnalysisArtifact } from './types';
 
 // Get API URL from localStorage, environment, or fallback
 const getApiUrl = () => {
@@ -98,7 +99,9 @@ export const sessionApi = {
     fileExtension: string,
     selectedPersonaIds: string[],
     analysisProvider?: string,
-    analysisModel?: string
+    analysisModel?: string,
+    workflow?: string,
+    analysisConfigJson?: any,
   ): Promise<Session> => {
     return fetchWithError(`${getApiUrl()}/sessions`, {
       method: 'POST',
@@ -112,6 +115,8 @@ export const sessionApi = {
           analysis_provider: analysisProvider,
           analysis_model: analysisModel,
         } : {}),
+        ...(workflow ? { workflow } : {}),
+        ...(analysisConfigJson ? { analysis_config_json: analysisConfigJson } : {}),
       }),
     });
   },
@@ -127,6 +132,52 @@ export const sessionApi = {
   delete: async (id: string): Promise<void> => {
     await fetchWithError(`${getApiUrl()}/sessions/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  getArtifacts: async (
+    id: string,
+    filters?: { persona_id?: string; artifact_type?: string }
+  ): Promise<{ session_id: string; artifacts: AnalysisArtifact[] }> => {
+    const params = new URLSearchParams();
+    if (filters?.persona_id) params.set('persona_id', filters.persona_id);
+    if (filters?.artifact_type) params.set('artifact_type', filters.artifact_type);
+    const qs = params.toString();
+    return fetchWithError(`${getApiUrl()}/sessions/${id}/artifacts${qs ? `?${qs}` : ''}`);
+  },
+};
+
+// Persona Groups API (role variants)
+export const personaGroupApi = {
+  list: async (): Promise<any[]> => {
+    return fetchWithError(`${getApiUrl()}/persona-groups`);
+  },
+
+  get: async (id: string): Promise<any> => {
+    return fetchWithError(`${getApiUrl()}/persona-groups/${id}`);
+  },
+
+  create: async (data: { role_key: string; name: string; description?: string; base_persona_id?: string }): Promise<any> => {
+    return fetchWithError(`${getApiUrl()}/persona-groups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  },
+
+  addMembers: async (id: string, personaIds: string[]): Promise<any> => {
+    return fetchWithError(`${getApiUrl()}/persona-groups/${id}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona_ids: personaIds }),
+    });
+  },
+
+  generateVariants: async (id: string, data: { count: number; base_persona_id?: string; seed_constraints?: any; generator_provider?: string; generator_model?: string }): Promise<any> => {
+    return fetchWithError(`${getApiUrl()}/persona-groups/${id}/generate-variants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
     });
   },
 };
@@ -264,6 +315,7 @@ export class AnalysisWebSocket {
 
 export default {
   personaApi,
+  personaGroupApi,
   sessionApi,
   settingsApi,
   r2Api,
