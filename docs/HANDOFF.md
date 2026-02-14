@@ -1,203 +1,152 @@
-# Roundtable + CLIBridge Integration - Project Handoff
+# Roundtable Handoff (Current)
 
-**Date**: 2025-02-11  
-**Status**: Documentation Complete, Ready for Implementation  
-**Branch**: main  
-**Last Commit**: `d2cfcde` - docs: Add comprehensive architecture and implementation documentation
+**Date**: 2026-02-14  
+**Repo**: `C:\Users\Matt\Documents\Projects\Roundtable`  
+**App Version**: `1.2.0` (frontend + api + `roundtable-mcp`)  
+**Status**: Web app is live; analysis, sharing, and export are implemented; local STDIO MCP workflow exists. Remaining work is mostly auth hardening and integrations.
 
----
+## What Roundtable Does
 
-## Executive Summary
+Roundtable takes a marketing document and runs it through a panel of personas (CISO, CIO, etc.). Each persona returns structured feedback (scores + issues + rewrites). Results are streamed live to the UI and stored for later viewing/export.
 
-This project redesigns Roundtable to use CLIBridge as the AI backend service via Cloudflare infrastructure. The existing FastAPI backend will be eliminated in favor of:
+## As-Built Architecture
 
-- **Cloudflare Workers** (API + WebSocket streaming)
-- **Cloudflare D1** (database for personas, sessions, analyses)
-- **Cloudflare R2** (document storage)
-- **CLIBridge** (AI execution via Claude CLI with persona skills)
+- `frontend/`: Next.js (static export) deployed to Cloudflare Pages (site UI).
+- `api/`: Cloudflare Worker (Hono) + Durable Object `SessionAnalyzer` for WebSocket streaming orchestration.
+- D1: metadata and results (`personas`, `sessions`, `analyses`, `session_shares`).
+- R2: uploaded source documents.
+- CLIBridge: upstream LLM bridge (Roundtable calls `/v1/stream`, falls back to `/v1/complete`).
+- `mcp/roundtable-mcp/`: local STDIO MCP server for running Roundtable from Claude Code/Codex without using the website.
 
-**Key Achievement**: Personas become CLIBridge "skills" - auto-generated, versioned, and deployed via API.
+## Key URLs (Current)
 
----
+- Frontend (Pages): `https://roundtable.browsium.com`
+- API (Worker): `https://roundtable-api.browsium.workers.dev`
+- CLIBridge (via bypass): configured in `api/wrangler.toml` as `CLIBRIDGE_URL`
 
-## What Has Been Completed
+## Core Flows
 
-### ✅ Documentation (Phase 0)
+### Web App
 
-Five comprehensive documentation files created in `docs/`:
+1. Frontend creates a session: `POST /sessions` (includes selected personas; can include per-session model/provider override).
+2. Frontend uploads the document bytes to: `PUT /r2/upload/:sessionId/:filename`.
+3. Analysis starts via WebSocket (preferred) or HTTP fallback: `POST /sessions/:id/analyze`.
+4. Durable Object fans out persona analyses (batched concurrency), streams SSE chunks from CLIBridge to the browser, then stores results in D1.
 
-1. **ARCHITECTURE.md** (398 lines)
-   - Complete system architecture diagrams
-   - Component interactions (Pages, Workers, D1, R2, CLIBridge)
-   - Data flows (upload, analysis, persona creation)
-   - Security considerations
-   - Technology stack decisions
+### Local MCP Workflow (STDIO)
 
-2. **CLOUDFLARE_SETUP.md** (275 lines)
-   - Step-by-step Cloudflare configuration
-   - Commands for: wrangler login, d1 create, r2 bucket create
-   - GitHub secrets configuration
-   - wrangler.toml template
-   - Database schema
-   - GitHub Actions workflows
+Implemented in `mcp/roundtable-mcp/`:
 
-3. **CLIBRIDGE_INTEGRATION.md** (455 lines)
-   - Skill upload endpoint requirements (being built by separate team)
-   - Authentication details (CF Access + API keys)
-   - Validation rules and security requirements
-   - Testing commands
+- `roundtable.focus_group`: creates a session + uploads file + triggers analysis + polls for completion, returning:
+  - executive summary (themes, averages, recommendations)
+  - full per-persona details
+- `roundtable.export_session`: writes `pdf/docx/csv/md` to disk with:
+  - Executive Summary first
+  - Persona Details second (sorted by persona)
 
-4. **SAMPLE_SKILL.md** (359 lines)
-   - Example persona-to-skill conversion (CISO)
-   - Generated manifest.yaml and analyze.tmpl
-   - Skill generation TypeScript code
-   - All 9 personas to convert
+Install helper: `scripts/install-roundtable-mcp.ps1` (builds + registers in `C:\Users\Matt\.claude\settings.json`).
 
-5. **IMPLEMENTATION_PLAN.md** (475 lines)
-   - 12-day implementation roadmap
-   - Phase-by-phase breakdown
-   - Success criteria and testing strategy
+## Model/Provider Selection (Important)
 
-### ✅ Key Decisions Made
+Model/provider is now recorded per session and included in reports/exports.
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| **WebSocket** | Native + custom reconnection | No dependencies, full control |
-| **Document Processing** | JavaScript libraries in Workers | Single runtime, no Python service |
-| **Analysis** | Concurrent (all personas simultaneously) | Faster completion, CLIBridge handles concurrency |
-| **Partial Results** | Memory only | Final results saved to D1 |
-| **Auth** | CF Access email magic link | Automatic, secure, no passwords |
-| **Skill Versioning** | Semantic versioning | Auto-cleanup after 60 days |
-| **Authoritative Source** | D1 | Skills are compiled/deployed versions |
+- Global default: Settings page writes to Worker `settings` table.
+- Per-session override: `POST /sessions` accepts `analysis_provider` + `analysis_model` (must be provided together).
+- Durable Object resolution order:
+  1. Session-scoped provider/model (preferred)
+  2. Global settings
+  3. Hard-coded defaults (`claude` / `sonnet`)
 
----
+Supported presets live in `frontend/src/lib/analysis-presets.ts`:
+`claude`, `codex`, `gemini`, `kimi 2.5`, `deepseek 3.1`, `minimax 2.1`, `deepseek r1`, `nemotron`, plus `custom`.
 
-## Current State
+## Export + Share
 
-### Existing Assets
+### Export
 
-**Roundtable Repo**: `/Users/matteller/Projects/Roundtable/`
-- Frontend: Next.js 14 with TypeScript (in `frontend/`)
-- Personas: 9 JSON files in `backend/personas/`
-- Documentation: 5 files in `docs/`
+Export works from the UI session detail page and in MCP.
 
-**CLIBridge**: `https://clibridge.badrobots.net`
-- Location: OracleVM
-- Being extended by separate team to add skill upload endpoint
-- Will provide: `POST /admin/skills/upload` and `POST /admin/skills/cleanup`
+- Formats: `pdf`, `docx`, `csv`, `md`
+- Structure:
+  1. Executive summary: common themes/highlights + dimension averages + recommendations
+  2. Persona-by-persona details
+- Provider/model is embedded in exports and shown in the UI session detail header.
 
-### Access Credentials (For Implementation)
+Export logic:
+- Browser exports: `frontend/src/lib/export.ts` (Blob-based)
+- MCP exports: `mcp/roundtable-mcp/src/export.ts` (Node-friendly bytes)
 
-**CLIBridge Bypass** (for Workers to call CLIBridge):
-- Base URL: `https://bypass.badrobots.net/clibridge`
-- Client ID: `72895a2b904f0cf918b46bcbaad7778f.access`
-- Client Secret: `4ba474883c884225479cf644be7942d6ce5fc747834fe5c3c2ae70a34df39a2d`
-- API Key: `pmk_0a1e0e1016ab47238cc343a40dcab913`
+### Share
 
-**Cloudflare** (to be configured):
-- Account ID: [User to provide]
-- D1 Database ID: [User to provide after setup]
-- R2 Bucket: `roundtable-documents`
-- Workers Project: `roundtable-api`
+Sharing is email-based (intended to map to CF Access identities):
 
----
+- Owner can share with a list of emails: `POST /sessions/:id/share`
+- API enforces access control for `GET /sessions` and `GET /sessions/:id`
 
-## What Needs to Be Done
+## Personas + “Skills” (CLIBridge)
 
-### Phase 1: Cloudflare Setup (User Action Required)
+- Personas are stored in D1 (`personas.profile_json` is the source of truth).
+- The API can deploy a persona to CLIBridge as a generated “skill”:
+  - `POST /personas/:id/deploy` uploads manifest/template to CLIBridge `/admin/skills/upload`.
+- Editing a persona bumps the patch version and marks it `draft` until redeployed.
 
-**Before implementation can begin, the user must:**
+Note: Runtime analysis does not execute CLIBridge skills; it builds a system prompt from persona JSON and calls `/v1/stream`.
 
-1. Run Cloudflare setup commands (see CLOUDFLARE_SETUP.md)
-   ```bash
-   npx wrangler login
-   npx wrangler d1 create roundtable-db
-   npx wrangler r2 bucket create roundtable-documents
-   mkdir api && cd api && npx wrangler init
-   ```
+## Auth + Security (Current vs Intended)
 
-2. Create GitHub Secrets (5 total):
-   - `CF_ACCOUNT_ID`
-   - `CF_API_TOKEN`
-   - `CLIBRIDGE_CLIENT_ID`
-   - `CLIBRIDGE_CLIENT_SECRET`
-   - `CLIBRIDGE_API_KEY`
+**Intended**: Put `roundtable.browsium.com` and the API hostname behind Cloudflare Access (`@browsium.com` only).
 
-3. Configure wrangler.toml with Database ID
+**Current reality**:
+- The Worker accepts requests without CF Access headers and falls back to `CF-Access-Authenticated-User-Email || 'anonymous'`.
+- This means the public `*.workers.dev` URL is effectively unauthenticated and can create/read sessions as “anonymous”.
 
-4. Run D1 schema migration
+Recommended hardening (pick one):
+1. Put the API behind an Access-protected custom domain and disable `workers.dev` for the Worker.
+2. Verify `CF-Access-Jwt-Assertion` in the Worker and reject unauthenticated traffic.
+3. Add explicit API-key auth for the Worker.
 
-**Status**: ⏳ Waiting for user
+Local MCP auth plan:
+- Use Access Service Token headers via env vars:
+  - `ROUNDTABLE_CF_ACCESS_CLIENT_ID`
+  - `ROUNDTABLE_CF_ACCESS_CLIENT_SECRET`
+- Optional: pin ownership:
+  - `ROUNDTABLE_USER_EMAIL=matt@browsium.com`
 
-### Phase 2: Workers Backend Implementation
+## Local Dev Commands
 
-**Directory**: `/Users/matteller/Projects/Roundtable/api/`
-
-**Files to Create**:
-
-```
-api/
-├── src/
-│   ├── index.ts                    # Worker entry point
-│   ├── routes/
-│   │   ├── sessions.ts            # Session CRUD + WebSocket upgrade
-│   │   ├── personas.ts            # Persona CRUD + skill deployment
-│   │   └── r2.ts                  # Presigned URL generation
-│   ├── durable-objects/
-│   │   └── session-analyzer.ts    # WebSocket + CLIBridge streaming
-│   └── lib/
-│       ├── clibridge.ts           # CLIBridge API client
-│       ├── d1.ts                  # Database helpers
-│       ├── r2.ts                  # R2 helpers
-│       ├── document-processor.ts  # PDF/DOCX/PPTX text extraction
-│       └── skill-generator.ts     # Generate skill files from persona
-├── wrangler.toml
-├── package.json
-└── tsconfig.json
+Frontend:
+```powershell
+cd frontend
+npm install
+npm run dev
 ```
 
-**Key Implementation Details**:
+API (Worker):
+```powershell
+cd api
+npm install
+npm run dev
+```
 
-1. **CLIBridge Client** (`lib/clibridge.ts`):
-   ```typescript
-   const CLIBRIDGE_URL = 'https://bypass.badrobots.net/clibridge';
-   const headers = {
-     'CF-Access-Client-Id': '72895a2b904f0cf918b46bcbaad7778f.access',
-     'CF-Access-Client-Secret': '4ba474883c884225479cf644be7942d6ce5fc747834fe5c3c2ae70a34df39a2d',
-     'X-API-Key': 'pmk_0a1e0e1016ab47238cc343a40dcab913',
-   };
-   ```
+MCP:
+```powershell
+cd mcp/roundtable-mcp
+npm install
+npm run dev
+```
 
-2. **Durable Object** (`durable-objects/session-analyzer.ts`):
-   - Handle WebSocket connections from frontend
-   - Call CLIBridge `/v1/stream` for each persona concurrently
-   - Forward SSE chunks to WebSocket
-   - Save final results to D1
+## Troubleshooting Notes
 
-3. **Document Processing** (`lib/document-processor.ts`):
-   - Libraries: `pdf-parse`, `mammoth`, `pptx-parser`
-   - Extract text from uploaded documents
-   - Store extracted text in D1
+- “Frontend still shows old version”: Cloudflare Pages is serving an older build. Redeploy Pages (the UI reads version from build-time env injected in `frontend/next.config.ts`).
+- “No response data received from CLIBridge”: `SessionAnalyzer` now has SSE idle/total timeouts and falls back to `/v1/complete`. If this still happens, inspect Worker logs (`wrangler tail`) and CLIBridge availability.
+- “One persona never completes”: batching is `maxConcurrency=2`; an upstream hang would block a batch. Timeouts + complete fallback should prevent indefinite hangs; if it reappears, capture Worker logs and the problematic session id.
 
-4. **Skill Generator** (`lib/skill-generator.ts`):
-   - Read persona JSON from D1
-   - Generate manifest.yaml
-   - Generate analyze.tmpl with embedded persona data
-   - Upload to CLIBridge via `/admin/skills/upload`
+## Next Steps (High Priority)
 
-**Status**: ⏳ Blocked until Phase 1 complete
-
-### Phase 3: Persona Migration
-
-**Script**: Convert existing 9 personas to CLIBridge skills
-
-**Process**:
-1. Read `/Users/matteller/Projects/Roundtable/backend/personas/*.json`
-2. Generate skill files (manifest.yaml + analyze.tmpl)
-3. Upload to CLIBridge via API
-4. Insert into D1 with mappings
-
-**Status**: ⏳ Blocked until Phase 2 complete
+1. Enforce real auth on the API (stop relying on `anonymous` fallback).
+2. Package/automation for MCP install/update (CI artifact or Claude plugin-style manifest).
+3. Workforce integration: create a “marketing worker” workflow that calls `roundtable.focus_group`, iterates, then exports a final report.
+4. (Optional) “Single source of truth” for version across `frontend/`, `api/`, and `mcp/`.
 
 ### Phase 4: Frontend Migration
 

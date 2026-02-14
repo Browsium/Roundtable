@@ -102,15 +102,15 @@ Create these repository secrets:
 
 ### Secret 3: CLIBRIDGE_CLIENT_ID
 - **Name**: `CLIBRIDGE_CLIENT_ID`
-- **Value**: `72895a2b904f0cf918b46bcbaad7778f.access`
+- **Value**: [Set in your password manager / internal notes. Do not commit.]
 
 ### Secret 4: CLIBRIDGE_CLIENT_SECRET
 - **Name**: `CLIBRIDGE_CLIENT_SECRET`
-- **Value**: `4ba474883c884225479cf644be7942d6ce5fc747834fe5c3c2ae70a34df39a2d`
+- **Value**: [Set in your password manager / internal notes. Do not commit.]
 
 ### Secret 5: CLIBRIDGE_API_KEY
 - **Name**: `CLIBRIDGE_API_KEY`
-- **Value**: `pmk_0a1e0e1016ab47238cc343a40dcab913`
+- **Value**: [Set in your password manager / internal notes. Do not commit.]
 
 ## Step 6: Configure wrangler.toml
 
