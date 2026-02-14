@@ -69,6 +69,11 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 
+# MCP
+mcp/**/node_modules/
+mcp/**/.cache/
+mcp/**/.tsbuildinfo
+
 # Testing
 .pytest_cache/
 .coverage
