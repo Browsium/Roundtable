@@ -142,6 +142,38 @@ async function listPersonas(apiUrl: string): Promise<Persona[]> {
   return await fetchJson<Persona[]>(apiUrl, '/personas');
 }
 
+async function createPersona(apiUrl: string, profileJson: any): Promise<any> {
+  if (!profileJson || typeof profileJson !== 'object') {
+    throw new Error('profile_json must be an object');
+  }
+  return await fetchJson<any>(apiUrl, '/personas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile_json: profileJson }),
+  });
+}
+
+async function updatePersona(apiUrl: string, personaId: string, profileJson: any): Promise<any> {
+  if (!personaId) throw new Error('persona_id is required');
+  if (!profileJson || typeof profileJson !== 'object') {
+    throw new Error('profile_json must be an object');
+  }
+  return await fetchJson<any>(apiUrl, `/personas/${encodeURIComponent(personaId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile_json: profileJson }),
+  });
+}
+
+async function deployPersona(apiUrl: string, personaId: string): Promise<any> {
+  if (!personaId) throw new Error('persona_id is required');
+  return await fetchJson<any>(apiUrl, `/personas/${encodeURIComponent(personaId)}/deploy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+}
+
 async function getSession(apiUrl: string, sessionId: string): Promise<Session> {
   return await fetchJson<Session>(apiUrl, `/sessions/${encodeURIComponent(sessionId)}`);
 }
@@ -337,6 +369,43 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'roundtable.create_persona',
+        description: 'Create a new persona in Roundtable (stored in D1).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            api_url: { type: 'string', description: `Override API URL (default: ${DEFAULT_API_URL})` },
+            profile_json: { type: 'object', description: 'Persona profile JSON object (must include id/name/role and required persona fields).' },
+          },
+          required: ['profile_json'],
+        },
+      },
+      {
+        name: 'roundtable.update_persona',
+        description: 'Update an existing persona in Roundtable. This bumps version and marks it draft until redeployed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            api_url: { type: 'string', description: `Override API URL (default: ${DEFAULT_API_URL})` },
+            persona_id: { type: 'string', description: 'Persona ID to update.' },
+            profile_json: { type: 'object', description: 'Updated persona profile JSON object.' },
+          },
+          required: ['persona_id', 'profile_json'],
+        },
+      },
+      {
+        name: 'roundtable.deploy_persona',
+        description: 'Deploy a persona to CLIBridge as a generated skill via Roundtable API.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            api_url: { type: 'string', description: `Override API URL (default: ${DEFAULT_API_URL})` },
+            persona_id: { type: 'string', description: 'Persona ID to deploy.' },
+          },
+          required: ['persona_id'],
+        },
+      },
+      {
         name: 'roundtable.focus_group',
         description: 'Submit a document to Roundtable and optionally wait for the focus-group analysis to complete.',
         inputSchema: {
@@ -396,6 +465,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const apiUrl = (typeof args.api_url === 'string' && args.api_url.trim()) ? args.api_url.trim() : DEFAULT_API_URL;
       const personas = await listPersonas(apiUrl);
       return { content: [{ type: 'text', text: JSON.stringify({ api_url: apiUrl, personas }, null, 2) }] };
+    }
+
+    if (name === 'roundtable.create_persona') {
+      const apiUrl = (typeof args.api_url === 'string' && args.api_url.trim()) ? args.api_url.trim() : DEFAULT_API_URL;
+      const profileJson = args.profile_json;
+      const persona = await createPersona(apiUrl, profileJson);
+      return { content: [{ type: 'text', text: JSON.stringify({ api_url: apiUrl, persona }, null, 2) }] };
+    }
+
+    if (name === 'roundtable.update_persona') {
+      const apiUrl = (typeof args.api_url === 'string' && args.api_url.trim()) ? args.api_url.trim() : DEFAULT_API_URL;
+      const personaId = typeof args.persona_id === 'string' ? args.persona_id.trim() : '';
+      const profileJson = args.profile_json;
+      const persona = await updatePersona(apiUrl, personaId, profileJson);
+      return { content: [{ type: 'text', text: JSON.stringify({ api_url: apiUrl, persona }, null, 2) }] };
+    }
+
+    if (name === 'roundtable.deploy_persona') {
+      const apiUrl = (typeof args.api_url === 'string' && args.api_url.trim()) ? args.api_url.trim() : DEFAULT_API_URL;
+      const personaId = typeof args.persona_id === 'string' ? args.persona_id.trim() : '';
+      const result = await deployPersona(apiUrl, personaId);
+      return { content: [{ type: 'text', text: JSON.stringify({ api_url: apiUrl, result }, null, 2) }] };
     }
 
     if (name === 'roundtable.get_session') {
