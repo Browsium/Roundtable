@@ -233,7 +233,7 @@ export default function Home() {
                   Applies to this document. You can change defaults in Settings.
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Currently supported: Claude. Other presets are disabled until CLIBridge adds support.
+                  DeepSeek/Kimi/MiniMax/Nemotron presets are routed via CLIBridge provider <span className="font-mono">opencode</span>.
                 </p>
               </div>
               <div className="flex items-center gap-2">

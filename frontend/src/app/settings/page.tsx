@@ -301,7 +301,7 @@ export default function SettingsPage() {
               Presets set the raw provider/model values sent to CLIBridge. You can fine-tune below.
             </p>
             <p className="text-sm text-gray-500 mt-1">
-              Currently supported: Claude. Other presets are disabled until CLIBridge adds support.
+              DeepSeek/Kimi/MiniMax/Nemotron presets are routed via provider <span className="font-mono">opencode</span>.
             </p>
           </div>
 
