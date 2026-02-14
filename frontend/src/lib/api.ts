@@ -76,6 +76,14 @@ export const sessionApi = {
     });
   },
 
+  retryPersona: async (id: string, personaId: string): Promise<{ message: string; session_id: string; persona_id: string }> => {
+    return fetchWithError(`${getApiUrl()}/sessions/${id}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona_id: personaId }),
+    });
+  },
+
   share: async (id: string, emails: string[]): Promise<{ message: string; shared_with: string[] }> => {
     return fetchWithError(`${getApiUrl()}/sessions/${id}/share`, {
       method: 'POST',

@@ -2,6 +2,7 @@ import type { Env } from '../index';
 import { D1Client } from '../lib/d1';
 import { CLIBridgeClient } from '../lib/clibridge';
 import { extractTextFromDocument } from '../lib/document-processor';
+import { validateAnalysisBackend } from '../lib/analysis-backend';
 
 interface AnalysisMessage {
   type: 'chunk' | 'complete' | 'error' | 'all_complete';
@@ -37,6 +38,25 @@ export class SessionAnalyzer {
       // Start analysis asynchronously
       this.startAnalysis(body.session_id);
       return new Response(JSON.stringify({ message: 'Analysis started' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Retry a failed persona analysis.
+    if (request.method === 'POST' && url.pathname === '/retry') {
+      const body = await request.json() as { session_id?: string; persona_id?: string };
+      const sessionId = typeof body?.session_id === 'string' ? body.session_id : '';
+      const personaId = typeof body?.persona_id === 'string' ? body.persona_id : '';
+      if (!sessionId || !personaId) {
+        return new Response(JSON.stringify({ error: 'session_id and persona_id are required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Run asynchronously and broadcast updates over any connected websockets.
+      this.retryPersonaAnalysis(sessionId, personaId);
+      return new Response(JSON.stringify({ message: 'Retry started', session_id: sessionId, persona_id: personaId }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -153,7 +173,28 @@ export class SessionAnalyzer {
           model: configuredModel || DEFAULT_ANALYSIS_MODEL,
         };
 
-      console.log(`Analysis backend for session ${sessionId}:`, analysisBackend);
+      const backendValidation = validateAnalysisBackend(this.env, analysisBackend.provider, analysisBackend.model);
+      if (!backendValidation.ok) {
+        const errorMessage = backendValidation.error;
+        sendMessage({ type: 'error', error: errorMessage });
+        await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage });
+
+        // Mark all pending analyses as failed so the UI has a consistent state.
+        const analyses = await db.getAnalyses(sessionId);
+        for (const analysis of analyses) {
+          if (analysis.status === 'pending' || analysis.status === 'running') {
+            await db.updateAnalysis(analysis.id, {
+              status: 'failed',
+              error_message: errorMessage,
+              completed_at: new Date().toISOString(),
+            });
+          }
+        }
+        return;
+      }
+
+      const validatedBackend = backendValidation.backend;
+      console.log(`Analysis backend for session ${sessionId}:`, validatedBackend);
 
       this.analysisStarted = true;
       console.log(`Starting analysis for session ${sessionId}`);
@@ -161,8 +202,9 @@ export class SessionAnalyzer {
       // Update session status
       await db.updateSession(sessionId, {
         status: 'analyzing',
-        analysis_provider: analysisBackend.provider,
-        analysis_model: analysisBackend.model,
+        analysis_provider: validatedBackend.provider,
+        analysis_model: validatedBackend.model,
+        error_message: null as any,
       });
       sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
 
@@ -171,8 +213,8 @@ export class SessionAnalyzer {
         const existingAnalyses = await db.getAnalyses(sessionId);
         for (const a of existingAnalyses) {
           await db.updateAnalysis(a.id, {
-            analysis_provider: analysisBackend.provider,
-            analysis_model: analysisBackend.model,
+            analysis_provider: validatedBackend.provider,
+            analysis_model: validatedBackend.model,
           });
         }
       } catch (e) {
@@ -236,7 +278,7 @@ export class SessionAnalyzer {
       for (let i = 0; i < personas.length; i += maxConcurrency) {
         const batch = personas.slice(i, i + maxConcurrency);
         const analysisPromises = batch.map(persona =>
-          this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend)
+          this.analyzePersona(sessionId, persona, documentText, sendMessage, db, validatedBackend)
         );
         await Promise.all(analysisPromises);
       }
@@ -295,6 +337,182 @@ export class SessionAnalyzer {
   }
 }
 
+  private async retryPersonaAnalysis(sessionId: string, personaId: string): Promise<void> {
+    const db = new D1Client(this.env.DB);
+
+    const sendMessage = (msg: any) => {
+      this.websockets.forEach((socket) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify(msg));
+        }
+      });
+    };
+
+    try {
+      const session = await db.getSession(sessionId);
+      if (!session) {
+        sendMessage({ type: 'error', error: 'Session not found' });
+        return;
+      }
+
+      if (session.status === 'uploaded') {
+        sendMessage({ type: 'error', error: 'Session has not started analysis yet' });
+        return;
+      }
+
+      if (session.status === 'analyzing') {
+        sendMessage({ type: 'error', error: 'Session is currently analyzing; wait for it to finish' });
+        return;
+      }
+
+      // Resolve the backend similarly to startAnalysis.
+      const DEFAULT_ANALYSIS_PROVIDER = 'claude';
+      const DEFAULT_ANALYSIS_MODEL = 'sonnet';
+
+      const sessionProvider = (session.analysis_provider || '').trim();
+      const sessionModel = (session.analysis_model || '').trim();
+
+      const configuredProvider = (await db.getSettingValue('analysis_provider'))?.trim();
+      const configuredModel = (await db.getSettingValue('analysis_model'))?.trim();
+
+      const requestedBackend = (sessionProvider && sessionModel)
+        ? { provider: sessionProvider, model: sessionModel }
+        : {
+          provider: configuredProvider || DEFAULT_ANALYSIS_PROVIDER,
+          model: configuredModel || DEFAULT_ANALYSIS_MODEL,
+        };
+
+      const backendValidation = validateAnalysisBackend(this.env, requestedBackend.provider, requestedBackend.model);
+      if (!backendValidation.ok) {
+        const errorMessage = backendValidation.error;
+        sendMessage({ type: 'error', persona_id: personaId, error: errorMessage });
+
+        const analyses = await db.getAnalyses(sessionId);
+        const analysis = analyses.find((a) => a.persona_id === personaId);
+        if (analysis) {
+          await db.updateAnalysis(analysis.id, {
+            status: 'failed',
+            error_message: errorMessage,
+            completed_at: new Date().toISOString(),
+          });
+        }
+
+        await this.updateSessionFinalStatus(sessionId, db, sendMessage, errorMessage);
+        return;
+      }
+
+      const analysisBackend = backendValidation.backend;
+      console.log(`Retry backend for session ${sessionId} persona ${personaId}:`, analysisBackend);
+
+      // Ensure the analysis exists for this persona and is reset.
+      const analyses = await db.getAnalyses(sessionId);
+      const analysis = analyses.find((a) => a.persona_id === personaId);
+      if (!analysis) {
+        sendMessage({ type: 'error', persona_id: personaId, error: 'Analysis not found for persona_id' });
+        return;
+      }
+
+      await db.updateAnalysis(analysis.id, {
+        status: 'pending',
+        score_json: null as any,
+        top_issues_json: null as any,
+        rewritten_suggestions_json: null as any,
+        error_message: null as any,
+        started_at: null as any,
+        completed_at: null as any,
+        analysis_provider: analysisBackend.provider,
+        analysis_model: analysisBackend.model,
+      });
+
+      // Update session status while retry is running.
+      await db.updateSession(sessionId, {
+        status: 'analyzing',
+        analysis_provider: analysisBackend.provider,
+        analysis_model: analysisBackend.model,
+        error_message: null as any,
+      });
+      sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
+
+      // Get document from R2 (re-extract; keeps retry self-contained).
+      const r2Object = await this.env.R2.get(session.file_r2_key);
+      if (!r2Object) {
+        sendMessage({ type: 'error', persona_id: personaId, error: 'Document not found in storage' });
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: 'Document not found in storage',
+          completed_at: new Date().toISOString(),
+        });
+        await this.updateSessionFinalStatus(sessionId, db, sendMessage);
+        return;
+      }
+
+      const fileBuffer = await r2Object.arrayBuffer();
+      const extractedDoc = await extractTextFromDocument(fileBuffer, session.file_extension);
+      const documentText = extractedDoc.text;
+
+      // Validate extraction output (mirrors startAnalysis behavior).
+      if (documentText.startsWith('[') && documentText.includes('document:') && documentText.includes('error')) {
+        const err = 'Failed to process document: ' + documentText;
+        sendMessage({ type: 'error', persona_id: personaId, error: err });
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: err,
+          completed_at: new Date().toISOString(),
+        });
+        await this.updateSessionFinalStatus(sessionId, db, sendMessage, err);
+        return;
+      }
+
+      const persona = await db.getPersona(personaId);
+      if (!persona) {
+        const err = 'Persona not found';
+        sendMessage({ type: 'error', persona_id: personaId, error: err });
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: err,
+          completed_at: new Date().toISOString(),
+        });
+        await this.updateSessionFinalStatus(sessionId, db, sendMessage, err);
+        return;
+      }
+
+      await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend);
+      await this.updateSessionFinalStatus(sessionId, db, sendMessage);
+    } catch (e) {
+      const errorMessage = String(e);
+      console.error(`Retry failed for session ${sessionId} persona ${personaId}:`, errorMessage);
+      sendMessage({ type: 'error', persona_id: personaId, error: errorMessage });
+      await this.updateSessionFinalStatus(sessionId, db, sendMessage, errorMessage);
+    }
+  }
+
+  private async updateSessionFinalStatus(
+    sessionId: string,
+    db: D1Client,
+    sendMessage: (msg: any) => void,
+    errorMessage?: string
+  ): Promise<void> {
+    const finalAnalyses = await db.getAnalyses(sessionId);
+    const failedCount = finalAnalyses.filter(a => a.status === 'failed').length;
+    const completedCount = finalAnalyses.filter(a => a.status === 'completed').length;
+
+    let finalStatus: 'completed' | 'failed' | 'partial' = 'completed';
+    if (finalAnalyses.length > 0 && failedCount === finalAnalyses.length) {
+      finalStatus = 'failed';
+    } else if (failedCount > 0) {
+      finalStatus = 'partial';
+    } else if (completedCount === finalAnalyses.length) {
+      finalStatus = 'completed';
+    }
+
+    await db.updateSession(sessionId, {
+      status: finalStatus,
+      ...(errorMessage !== undefined ? { error_message: errorMessage } : { error_message: null as any }),
+    } as any);
+
+    sendMessage({ type: 'status', session_id: sessionId, status: finalStatus });
+  }
+
   private async analyzePersona(
     sessionId: string,
     persona: any,
@@ -330,6 +548,11 @@ export class SessionAnalyzer {
         await db.updateAnalysis(analysis.id, {
           status: 'running',
           started_at: startedAt,
+          completed_at: null as any,
+          score_json: null as any,
+          top_issues_json: null as any,
+          rewritten_suggestions_json: null as any,
+          error_message: null as any,
           analysis_provider: analysisBackend.provider,
           analysis_model: analysisBackend.model,
         });
@@ -647,6 +870,7 @@ export class SessionAnalyzer {
           console.log(`Saving analysis to D1 for persona ${persona.id}`);
           await db.updateAnalysis(analysis.id, {
             status: 'completed',
+            error_message: null as any,
             score_json: JSON.stringify(result.dimension_scores || {}),
             top_issues_json: JSON.stringify(result.top_3_issues || []),
             rewritten_suggestions_json: JSON.stringify({

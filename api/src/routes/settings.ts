@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index';
 import { D1Client } from '../lib/d1';
+import { validateAnalysisBackend } from '../lib/analysis-backend';
 
 export const settingsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -66,6 +67,16 @@ settingsRoutes.put('/', async (c) => {
 
   if (typeof updates.analysis_model === 'string' && updates.analysis_model.length === 0) {
     return c.json({ error: 'analysis_model cannot be empty' }, 400);
+  }
+
+  if (updatingProvider && updatingModel) {
+    const validation = validateAnalysisBackend(c.env, updates.analysis_provider, updates.analysis_model);
+    if (!validation.ok) {
+      return c.json({ error: validation.error }, 400);
+    }
+    // Normalize to a stable form (e.g., provider lowercased).
+    updates.analysis_provider = validation.backend.provider;
+    updates.analysis_model = validation.backend.model;
   }
 
   if (Object.keys(updates).length === 0) {

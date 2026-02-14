@@ -141,9 +141,19 @@ function SessionDetailContent() {
   }, [session?.status, loadSession]);
 
   const handleRetry = async (_personaId: string, _analysisId: number) => {
-    // Retry not implemented yet - would reconnect WebSocket and restart analysis
-    setError('Retry functionality coming soon');
-    setTimeout(() => setError(null), 3000);
+    try {
+      setError(null);
+      setRetryingId(_analysisId);
+      await sessionApi.retryPersona(sessionId, _personaId);
+      setSession((s) => (s ? { ...s, status: 'analyzing' } : s));
+      setNotice('Retry started');
+      setTimeout(() => setNotice(null), 3000);
+      await loadSession();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to retry analysis');
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   const handleDelete = async () => {

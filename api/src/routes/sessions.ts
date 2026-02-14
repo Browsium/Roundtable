@@ -3,6 +3,7 @@ import type { Env } from '../index';
 import { D1Client } from '../lib/d1';
 import { R2Client } from '../lib/r2';
 import { generateR2Key, getFileExtension } from '../lib/document-processor';
+import { validateAnalysisBackend } from '../lib/analysis-backend';
 
 export const sessionRoutes = new Hono<{ Bindings: Env }>();
 
@@ -103,6 +104,17 @@ sessionRoutes.post('/', async (c) => {
   if (hasModel && !modelTrimmed) {
     return c.json({ error: 'analysis_model cannot be empty' }, 400);
   }
+
+  let providerFinal = providerTrimmed;
+  let modelFinal = modelTrimmed;
+  if (hasProvider && hasModel && providerTrimmed && modelTrimmed) {
+    const validation = validateAnalysisBackend(c.env, providerTrimmed, modelTrimmed);
+    if (!validation.ok) {
+      return c.json({ error: validation.error }, 400);
+    }
+    providerFinal = validation.backend.provider;
+    modelFinal = validation.backend.model;
+  }
   
   const userEmail = getViewerEmail(c);
   const sessionId = crypto.randomUUID();
@@ -119,8 +131,8 @@ sessionRoutes.post('/', async (c) => {
     selected_persona_ids: JSON.stringify(selected_persona_ids),
     status: 'uploaded',
     ...(hasProvider && hasModel ? {
-      analysis_provider: providerTrimmed,
-      analysis_model: modelTrimmed,
+      analysis_provider: providerFinal,
+      analysis_model: modelFinal,
     } : {}),
   });
   
@@ -280,4 +292,58 @@ sessionRoutes.post('/:id/analyze', async (c) => {
   }));
 
   return c.json({ message: 'Analysis started', session_id: id });
+});
+
+// Retry a failed persona analysis (owner-only).
+sessionRoutes.post('/:id/retry', async (c) => {
+  const id = c.req.param('id');
+  const db = new D1Client(c.env.DB);
+
+  const session = await db.getSession(id);
+  if (!session) {
+    return c.json({ error: 'Session not found' }, 404);
+  }
+
+  const viewerEmail = getViewerEmail(c);
+  if (session.user_email !== viewerEmail) {
+    return c.json({ error: 'Only the owner can retry analyses' }, 403);
+  }
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const personaId = typeof body?.persona_id === 'string' ? body.persona_id.trim() : '';
+  if (!personaId) {
+    return c.json({ error: 'persona_id is required' }, 400);
+  }
+
+  if (session.status === 'uploaded') {
+    return c.json({ error: 'Session has not started analysis yet' }, 400);
+  }
+
+  if (session.status === 'analyzing') {
+    return c.json({ error: 'Session is currently analyzing; wait for it to finish' }, 400);
+  }
+
+  const analyses = await db.getAnalyses(id);
+  const analysis = analyses.find((a) => a.persona_id === personaId);
+  if (!analysis) {
+    return c.json({ error: 'Analysis not found for persona_id' }, 404);
+  }
+
+  // Trigger the durable object to retry this persona.
+  const analyzerId = c.env.SESSION_ANALYZER.idFromName(id);
+  const analyzer = c.env.SESSION_ANALYZER.get(analyzerId);
+
+  await analyzer.fetch(new Request('http://internal/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: id, persona_id: personaId }),
+  }));
+
+  return c.json({ message: 'Retry started', session_id: id, persona_id: personaId });
 });

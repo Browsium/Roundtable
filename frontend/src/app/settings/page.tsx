@@ -294,11 +294,14 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {MODEL_PRESETS.map(p => (
-                <option key={p.id} value={p.id}>{p.label}</option>
+                <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
               ))}
             </select>
             <p className="text-sm text-gray-500 mt-2">
               Presets set the raw provider/model values sent to CLIBridge. You can fine-tune below.
+            </p>
+            <p className="text-sm text-gray-500 mt-1">
+              Currently supported: Claude. Other presets are disabled until CLIBridge adds support.
             </p>
           </div>
 

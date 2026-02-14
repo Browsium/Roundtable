@@ -232,6 +232,9 @@ export default function Home() {
                 <p className="text-sm text-gray-600 mt-1">
                   Applies to this document. You can change defaults in Settings.
                 </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Currently supported: Claude. Other presets are disabled until CLIBridge adds support.
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-600">Preset</label>
@@ -241,7 +244,7 @@ export default function Home() {
                   className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {MODEL_PRESETS.map(p => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
+                    <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
                   ))}
                 </select>
               </div>

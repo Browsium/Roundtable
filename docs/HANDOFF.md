@@ -195,9 +195,9 @@ Claude CLI
 
 **Required Headers for ALL requests**:
 ```
-CF-Access-Client-Id: 72895a2b904f0cf918b46bcbaad7778f.access
-CF-Access-Client-Secret: 4ba474883c884225479cf644be7942d6ce5fc747834fe5c3c2ae70a34df39a2d
-X-API-Key: pmk_0a1e0e1016ab47238cc343a40dcab913
+CF-Access-Client-Id: $CLIBRIDGE_CLIENT_ID
+CF-Access-Client-Secret: $CLIBRIDGE_CLIENT_SECRET
+X-API-Key: $CLIBRIDGE_API_KEY
 ```
 
 **Endpoints to Use**:
@@ -265,9 +265,9 @@ Phase 2 → Phase 3 → Phase 4 (sequential)
 ```bash
 # Test CLIBridge skill upload
 curl -X POST https://bypass.badrobots.net/clibridge/admin/skills/upload \
-  -H "CF-Access-Client-Id: 72895a2b904f0cf918b46bcbaad7778f.access" \
-  -H "CF-Access-Client-Secret: 4ba474883c884225479cf644be7942d6ce5fc747834fe5c3c2ae70a34df39a2d" \
-  -H "X-API-Key: pmk_0a1e0e1016ab47238cc343a40dcab913" \
+  -H "CF-Access-Client-Id: ..." \
+  -H "CF-Access-Client-Secret: ..." \
+  -H "X-API-Key: ..." \
   -F "skill_name=roundtable-test-v1.0.0" \
   -F "manifest=@test-manifest.yaml" \
   -F "template=@test-template.tmpl"

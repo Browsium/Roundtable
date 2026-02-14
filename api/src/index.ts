@@ -16,6 +16,8 @@ export interface Env {
   CLIBRIDGE_CLIENT_ID: string;
   CLIBRIDGE_CLIENT_SECRET: string;
   CLIBRIDGE_API_KEY: string;
+  // Comma-separated allowlist. Defaults to "claude" when unset.
+  SUPPORTED_ANALYSIS_PROVIDERS?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
