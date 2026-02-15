@@ -28,11 +28,18 @@ function coerceLegacyBackend(provider: string, model: string): AnalysisBackend {
     return { provider: 'opencode', model: p };
   }
 
+  // Canonicalize case for known OpenCode model aliases.
+  if (p === 'opencode' && OPENCODE_MODEL_ALIASES.has(mLower)) {
+    return { provider: 'opencode', model: mLower };
+  }
+
   // Roundtable v1.2.0 presets previously (incorrectly) used these aliases as providers.
   // Convert them into the canonical "opencode" provider + model alias form.
   if (p === 'deepseek') {
     if (mLower === 'r1' || mLower === 'deepseek-r1') return { provider: 'opencode', model: 'deepseek-r1' };
     if (mLower === '3.1' || mLower === 'deepseek-3.1') return { provider: 'opencode', model: 'deepseek-3.1' };
+    // Treat legacy "deepseek" provider usage as an alias for OpenCode (model passthrough).
+    return { provider: 'opencode', model: mLower };
   }
 
   if (p === 'kimi') {
@@ -84,6 +91,22 @@ export function validateAnalysisBackend(
   const supported = getSupportedProviders(env);
   const coerced = coerceLegacyBackend(providerTrimmed, modelTrimmed);
   const providerNormalized = coerced.provider.toLowerCase();
+
+  // Guard against a common OpenCode misconfiguration: callers set the model to a provider-like string
+  // (e.g. "deepseek") which OpenCode interprets as a provider and errors with "unknown provider: deepseek".
+  if (providerNormalized === 'opencode') {
+    const mLower = (coerced.model || '').trim().toLowerCase();
+    const providerLike = new Set(['deepseek', 'kimi', 'minimax']);
+    if (providerLike.has(mLower)) {
+      const suggestions: Record<string, string[]> = {
+        deepseek: ['deepseek-r1', 'deepseek-3.1'],
+        kimi: ['kimi-2.5'],
+        minimax: ['minimax-2.1'],
+      };
+      const hint = suggestions[mLower] ? ` Try: ${suggestions[mLower].join(', ')} (or a full Nvidia model path like nvidia/...).` : '';
+      return { ok: false, error: `Invalid opencode analysis_model '${coerced.model}'.${hint}` };
+    }
+  }
 
   if (!supported.includes(providerNormalized)) {
     return {

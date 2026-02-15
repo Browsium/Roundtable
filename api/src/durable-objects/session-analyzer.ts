@@ -956,7 +956,32 @@ Respond with ONLY valid JSON:
         return;
       }
 
-      // Resolve the backend similarly to startAnalysis.
+      const workflowRaw = (session.workflow || '').trim().toLowerCase();
+      const workflow = (workflowRaw === 'roundtable_council' || workflowRaw === 'role_variant_discussion' || workflowRaw === 'roundtable_standard')
+        ? workflowRaw
+        : 'roundtable_standard';
+
+      let analysisConfig: any = {};
+      const rawConfig = (session.analysis_config_json || '').trim();
+      if (rawConfig) {
+        try {
+          analysisConfig = JSON.parse(rawConfig);
+        } catch (e) {
+          console.warn(`Invalid analysis_config_json for session ${sessionId} (retry); ignoring.`, e);
+        }
+      }
+
+      const parseBackend = (v: any): Backend | null => {
+        if (!v || typeof v !== 'object') return null;
+        const provider = typeof v.provider === 'string' ? v.provider.trim() : '';
+        const model = typeof v.model === 'string' ? v.model.trim() : '';
+        if (!provider || !model) return null;
+        const validation = validateAnalysisBackend(this.env, provider, model);
+        if (!validation.ok) return null;
+        return validation.backend;
+      };
+
+      // Resolve the fallback backend similarly to startAnalysis.
       const DEFAULT_ANALYSIS_PROVIDER = 'claude';
       const DEFAULT_ANALYSIS_MODEL = 'sonnet';
 
@@ -992,8 +1017,40 @@ Respond with ONLY valid JSON:
         return;
       }
 
-      const analysisBackend = backendValidation.backend;
-      console.log(`Retry backend for session ${sessionId} persona ${personaId}:`, analysisBackend);
+      const fallbackBackend = backendValidation.backend;
+
+      let analysisBackend: Backend = fallbackBackend;
+      let councilCfg: { members: Backend[]; reviewer: Backend; chair: Backend } | null = null;
+      let discussionCfg: { groupId: string; variantBackend: Backend; chairBackend: Backend } | null = null;
+
+      if (workflow === 'roundtable_council') {
+        const council = (analysisConfig && typeof analysisConfig === 'object')
+          ? ((analysisConfig.council && typeof analysisConfig.council === 'object') ? analysisConfig.council : analysisConfig)
+          : {};
+
+        const membersRaw = Array.isArray(council.members) ? council.members : [];
+        const members: Backend[] = [];
+        for (const m of membersRaw) {
+          const b = parseBackend(m);
+          if (b) members.push(b);
+        }
+        const chair = parseBackend(council.chair_backend || council.chair) || fallbackBackend;
+        const reviewer = parseBackend(council.reviewer_backend || council.reviewer) || chair;
+        councilCfg = { members: members.length > 0 ? members : [fallbackBackend], reviewer, chair };
+        analysisBackend = chair;
+      } else if (workflow === 'role_variant_discussion') {
+        const discussion = (analysisConfig && typeof analysisConfig === 'object')
+          ? ((analysisConfig.discussion && typeof analysisConfig.discussion === 'object') ? analysisConfig.discussion : analysisConfig)
+          : {};
+
+        const variantBackend = parseBackend(discussion.variant_backend || discussion.variant) || fallbackBackend;
+        const chairBackend = parseBackend(discussion.chair_backend || discussion.chair) || fallbackBackend;
+        const groupId = typeof discussion.persona_group_id === 'string' ? discussion.persona_group_id.trim() : '';
+        discussionCfg = { groupId, variantBackend, chairBackend };
+        analysisBackend = variantBackend;
+      }
+
+      console.log(`Retry workflow/backend for session ${sessionId} persona ${personaId}:`, { workflow, analysisBackend });
 
       // Ensure the analysis exists for this persona and is reset.
       const analyses = await db.getAnalyses(sessionId);
@@ -1018,8 +1075,8 @@ Respond with ONLY valid JSON:
       // Update session status while retry is running.
       await db.updateSession(sessionId, {
         status: 'analyzing',
-        analysis_provider: analysisBackend.provider,
-        analysis_model: analysisBackend.model,
+        analysis_provider: (councilCfg ? councilCfg.chair.provider : (discussionCfg ? discussionCfg.chairBackend.provider : analysisBackend.provider)),
+        analysis_model: (councilCfg ? councilCfg.chair.model : (discussionCfg ? discussionCfg.chairBackend.model : analysisBackend.model)),
         error_message: null as any,
       });
       sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
@@ -1067,7 +1124,36 @@ Respond with ONLY valid JSON:
         return;
       }
 
+      if (councilCfg) {
+        await this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, councilCfg);
+        await this.updateSessionFinalStatus(sessionId, db, sendMessage);
+        return;
+      }
+
       await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend);
+
+      // If this session is a discussion workflow, re-run chair synthesis to update the final.
+      if (discussionCfg) {
+        let variantPersonas: any[] = [];
+        try {
+          const ids = JSON.parse(session.selected_persona_ids || '[]');
+          if (Array.isArray(ids)) {
+            for (const id of ids) {
+              const p = await db.getPersona(String(id));
+              if (p) variantPersonas.push(p);
+            }
+          }
+        } catch {
+          // ignore
+        }
+        if (variantPersonas.length > 0) {
+          await this.runRoleVariantDiscussionSynthesis(sessionId, variantPersonas, discussionCfg.groupId, documentText, sendMessage, db, {
+            variantBackend: discussionCfg.variantBackend,
+            chairBackend: discussionCfg.chairBackend,
+          });
+        }
+      }
+
       await this.updateSessionFinalStatus(sessionId, db, sendMessage);
     } catch (e) {
       const errorMessage = String(e);

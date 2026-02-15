@@ -120,12 +120,12 @@ function SessionDetailContent() {
       if (!sessionId || !session) return;
       if (session.workflow !== 'role_variant_discussion') return;
 
-      try {
-        setDiscussionLoading(true);
-        const [finalResp, dissentResp] = await Promise.all([
-          sessionApi.getArtifacts(sessionId, { artifact_type: 'discussion_chair_final' }),
-          sessionApi.getArtifacts(sessionId, { artifact_type: 'discussion_dissents' }),
-        ]);
+        try {
+          setDiscussionLoading(true);
+          const [finalResp, dissentResp] = await Promise.all([
+            sessionApi.getArtifacts(sessionId, { persona_id: 'discussion', artifact_type: 'discussion_chair_final' }),
+            sessionApi.getArtifacts(sessionId, { persona_id: 'discussion', artifact_type: 'discussion_dissents' }),
+          ]);
 
         const parseContent = (a: any) => {
           const raw = a?.content_json;
@@ -137,8 +137,14 @@ function SessionDetailContent() {
           return raw;
         };
 
-        const finalArtifact = Array.isArray(finalResp?.artifacts) ? finalResp.artifacts[0] : null;
-        const dissentArtifact = Array.isArray(dissentResp?.artifacts) ? dissentResp.artifacts[0] : null;
+          const pickLatest = (artifacts: any[] | undefined) => {
+            if (!Array.isArray(artifacts) || artifacts.length === 0) return null;
+            // API currently returns artifacts ordered by increasing id; pick the newest.
+            return artifacts[artifacts.length - 1];
+          };
+
+          const finalArtifact = pickLatest(finalResp?.artifacts);
+          const dissentArtifact = pickLatest(dissentResp?.artifacts);
 
         const finalPayload = finalArtifact ? parseContent(finalArtifact) : null;
         const dissentsPayload = dissentArtifact ? parseContent(dissentArtifact) : null;
