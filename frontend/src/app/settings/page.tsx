@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Settings, Check, AlertCircle, GitBranch, Server, Monitor } from 'lucide-react';
-import { FRONTEND_VERSION, BUILD_DATE } from '@/lib/version';
+import { FRONTEND_VERSION, BUILD_DATE_ET } from '@/lib/version';
 import { settingsApi, clibridgeApi } from '@/lib/api';
 import {
   DEFAULT_ANALYSIS_MODEL,
@@ -162,13 +162,22 @@ export default function SettingsPage() {
     return providerAvailability[p] === false;
   };
 
-  const formatBuildDate = (dateString: string) => {
+  const formatBuildDateEt = (dateString: string) => {
     try {
       if (!dateString) return 'unknown';
       const d = new Date(dateString);
       if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return 'unknown';
-      // Use a deterministic format so static prerender and client hydration match.
-      return d.toISOString();
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZoneName: 'short',
+      }).format(d);
     } catch {
       return dateString;
     }
@@ -201,7 +210,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="flex justify-between">
                   <span>Build Date:</span>
-                  <span className="font-mono">{formatBuildDate(BUILD_DATE)}</span>
+                  <span className="font-mono">{BUILD_DATE_ET || 'unknown'}</span>
                 </div>
               </div>
             </div>
@@ -220,7 +229,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>Build Date:</span>
-                    <span className="font-mono">{formatBuildDate(apiVersion.build_date)}</span>
+                    <span className="font-mono">{formatBuildDateEt(apiVersion.build_date)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Environment:</span>
