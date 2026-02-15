@@ -72,6 +72,7 @@ function SessionDetailContent() {
 
   const [activityOpen, setActivityOpen] = useState(true);
   const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
+  const analysisStartRequestedRef = useRef(false);
 
   const appendActivity = useCallback((item: ActivityItem) => {
     setActivityLog((prev) => {
@@ -84,6 +85,7 @@ function SessionDetailContent() {
   useEffect(() => {
     // Reset ephemeral UI state when navigating between sessions.
     setActivityLog([]);
+    analysisStartRequestedRef.current = false;
   }, [sessionId]);
 
   // Load personas to get names
@@ -115,6 +117,7 @@ function SessionDetailContent() {
   // Throttle session reloads; websocket can be noisy.
   const lastLoadAtRef = useRef(0);
   const loadScheduledRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsRef = useRef<AnalysisWebSocket | null>(null);
   const requestSessionReload = useCallback(() => {
     const minIntervalMs = 1000;
     const now = Date.now();
@@ -135,10 +138,10 @@ function SessionDetailContent() {
   }, [loadSession]);
 
   // Start WebSocket connection for analysis
-  const startAnalysis = useCallback((opts?: { autoStart?: boolean }) => {
-    if (!sessionId || wsConnected) return;
+  const connectWebSocket = useCallback((opts?: { autoStart?: boolean }) => {
+    if (!sessionId) return;
+    if (wsRef.current) return;
 
-    setWsConnected(true);
     const ws = new AnalysisWebSocket(
       sessionId,
       (data) => {
@@ -207,15 +210,31 @@ function SessionDetailContent() {
       (err) => {
         console.error('WebSocket error:', err);
       },
-      { autoStart: opts?.autoStart ?? true }
+      {
+        autoStart: opts?.autoStart ?? true,
+        onOpen: () => setWsConnected(true),
+        onClose: () => setWsConnected(false),
+      }
     );
 
+    wsRef.current = ws;
     ws.connect();
+  }, [sessionId, appendActivity, requestSessionReload]);
 
-      return () => {
-        ws.close();
-      };
-  }, [sessionId, wsConnected, appendActivity, requestSessionReload]);
+  const closeWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setWsConnected(false);
+  }, []);
+
+  useEffect(() => {
+    // Ensure WS is closed on unmount and when navigating between sessions.
+    return () => {
+      closeWebSocket();
+    };
+  }, [closeWebSocket, sessionId]);
 
   useEffect(() => {
     loadPersonas();
@@ -283,32 +302,31 @@ function SessionDetailContent() {
   // Trigger analysis when session is uploaded
   useEffect(() => {
     if (!sessionId || !session) return;
-    if (wsConnected) return;
     if (!session.is_owner) return;
     if (session.status !== 'uploaded') return;
+    if (analysisStartRequestedRef.current) return;
+    analysisStartRequestedRef.current = true;
 
     let cancelled = false;
-    let cleanup: void | (() => void);
 
     (async () => {
       try {
         await sessionApi.startAnalysis(sessionId);
         console.log('Analysis triggered via API');
         if (cancelled) return;
-        cleanup = startAnalysis({ autoStart: false });
+        connectWebSocket({ autoStart: false });
       } catch (err) {
         console.error('Failed to trigger analysis:', err);
         if (cancelled) return;
         // Fall back to starting via WebSocket if the API call fails.
-        cleanup = startAnalysis({ autoStart: true });
+        connectWebSocket({ autoStart: true });
       }
     })();
 
     return () => {
       cancelled = true;
-      if (cleanup) cleanup();
     };
-  }, [session, wsConnected, startAnalysis, sessionId]);
+  }, [sessionId, session, connectWebSocket]);
 
   useEffect(() => {
     // Poll for updates if analyzing
@@ -325,14 +343,10 @@ function SessionDetailContent() {
   useEffect(() => {
     // If user navigates directly to an in-progress session, connect to WS for live activity (no auto-start).
     if (!sessionId || !session) return;
-    if (wsConnected) return;
     if (session.status !== 'analyzing') return;
 
-    const cleanup = startAnalysis({ autoStart: false });
-    return () => {
-      if (cleanup) cleanup();
-    };
-  }, [sessionId, session, wsConnected, startAnalysis]);
+    connectWebSocket({ autoStart: false });
+  }, [sessionId, session, connectWebSocket]);
 
   const handleRetry = async (_personaId: string, _analysisId: number) => {
     if (session?.status === 'analyzing') {
