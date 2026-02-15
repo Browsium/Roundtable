@@ -103,6 +103,15 @@ export interface SessionWithAnalyses extends Session {
 
 export class D1Client {
   private db: D1Database;
+  private ensured = {
+    analysisBackendColumns: false,
+    sessionWorkflowColumns: false,
+    errorMessageColumn: { sessions: false, analyses: false },
+    sessionSharesSchema: false,
+    personaGroupsSchema: false,
+    analysisArtifactsSchema: false,
+    settingsSchema: false,
+  };
 
   constructor(db: D1Database) {
     this.db = db;
@@ -114,6 +123,7 @@ export class D1Client {
   }
 
   private async ensureAnalysisBackendColumns(): Promise<void> {
+    if (this.ensured.analysisBackendColumns) return;
     const ensureColumn = async (table: 'sessions' | 'analyses', column: 'analysis_provider' | 'analysis_model') => {
       const exists = await this.columnExists(table, column);
       if (exists) return;
@@ -131,9 +141,11 @@ export class D1Client {
     await ensureColumn('sessions', 'analysis_model');
     await ensureColumn('analyses', 'analysis_provider');
     await ensureColumn('analyses', 'analysis_model');
+    this.ensured.analysisBackendColumns = true;
   }
 
   private async ensureSessionWorkflowColumns(): Promise<void> {
+    if (this.ensured.sessionWorkflowColumns) return;
     const ensureColumn = async (column: 'workflow' | 'analysis_config_json') => {
       const exists = await this.columnExists('sessions', column);
       if (exists) return;
@@ -148,11 +160,18 @@ export class D1Client {
 
     await ensureColumn('workflow');
     await ensureColumn('analysis_config_json');
+    this.ensured.sessionWorkflowColumns = true;
   }
 
   private async ensureErrorMessageColumn(table: 'sessions' | 'analyses'): Promise<void> {
+    if (table === 'sessions' && this.ensured.errorMessageColumn.sessions) return;
+    if (table === 'analyses' && this.ensured.errorMessageColumn.analyses) return;
     const exists = await this.columnExists(table, 'error_message');
-    if (exists) return;
+    if (exists) {
+      if (table === 'sessions') this.ensured.errorMessageColumn.sessions = true;
+      if (table === 'analyses') this.ensured.errorMessageColumn.analyses = true;
+      return;
+    }
     try {
       await this.db.prepare(`ALTER TABLE ${table} ADD COLUMN error_message TEXT`).run();
     } catch (e) {
@@ -160,9 +179,13 @@ export class D1Client {
       if (msg.toLowerCase().includes('duplicate column')) return;
       throw e;
     }
+
+    if (table === 'sessions') this.ensured.errorMessageColumn.sessions = true;
+    if (table === 'analyses') this.ensured.errorMessageColumn.analyses = true;
   }
 
   private async ensureSessionSharesSchema(): Promise<void> {
+    if (this.ensured.sessionSharesSchema) return;
     // Idempotent; safe to call from request paths.
     await this.db.prepare(
       `CREATE TABLE IF NOT EXISTS session_shares (
@@ -176,9 +199,11 @@ export class D1Client {
 
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_email ON session_shares(email)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_session_shares_session ON session_shares(session_id)').run();
+    this.ensured.sessionSharesSchema = true;
   }
 
   private async ensurePersonaGroupsSchema(): Promise<void> {
+    if (this.ensured.personaGroupsSchema) return;
     await this.db.prepare(
       `CREATE TABLE IF NOT EXISTS persona_groups (
         id TEXT PRIMARY KEY,
@@ -207,9 +232,11 @@ export class D1Client {
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_groups_owner ON persona_groups(owner_email, created_at DESC)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_group_members_group ON persona_group_members(group_id)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_persona_group_members_persona ON persona_group_members(persona_id)').run();
+    this.ensured.personaGroupsSchema = true;
   }
 
   private async ensureAnalysisArtifactsSchema(): Promise<void> {
+    if (this.ensured.analysisArtifactsSchema) return;
     await this.db.prepare(
       `CREATE TABLE IF NOT EXISTS analysis_artifacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,9 +254,11 @@ export class D1Client {
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_session ON analysis_artifacts(session_id)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_session_persona ON analysis_artifacts(session_id, persona_id)').run();
     await this.db.prepare('CREATE INDEX IF NOT EXISTS idx_analysis_artifacts_type ON analysis_artifacts(artifact_type)').run();
+    this.ensured.analysisArtifactsSchema = true;
   }
 
   private async ensureSettingsSchema(): Promise<void> {
+    if (this.ensured.settingsSchema) return;
     await this.db.prepare(
       `CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -237,6 +266,7 @@ export class D1Client {
         updated_at TEXT NOT NULL
       )`
     ).run();
+    this.ensured.settingsSchema = true;
   }
 
   // Persona operations

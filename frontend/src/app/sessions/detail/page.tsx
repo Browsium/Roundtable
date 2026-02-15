@@ -85,7 +85,7 @@ function SessionDetailContent() {
   }, [sessionId]);
 
   // Start WebSocket connection for analysis
-  const startAnalysis = useCallback(() => {
+  const startAnalysis = useCallback((opts?: { autoStart?: boolean }) => {
     if (!sessionId || wsConnected) return;
 
     setWsConnected(true);
@@ -100,7 +100,8 @@ function SessionDetailContent() {
       },
       (err) => {
         console.error('WebSocket error:', err);
-      }
+      },
+      { autoStart: opts?.autoStart ?? true }
     );
 
     ws.connect();
@@ -166,20 +167,32 @@ function SessionDetailContent() {
 
   // Trigger analysis when session is uploaded
   useEffect(() => {
-    if (session && session.status === 'uploaded' && !wsConnected && session.is_owner) {
-      // First try to trigger analysis via API
-      sessionApi.startAnalysis(sessionId).then(() => {
+    if (!sessionId || !session) return;
+    if (wsConnected) return;
+    if (!session.is_owner) return;
+    if (session.status !== 'uploaded') return;
+
+    let cancelled = false;
+    let cleanup: void | (() => void);
+
+    (async () => {
+      try {
+        await sessionApi.startAnalysis(sessionId);
         console.log('Analysis triggered via API');
-        // Then connect WebSocket for real-time updates
-        const cleanup = startAnalysis();
-        return cleanup;
-      }).catch((err) => {
+        if (cancelled) return;
+        cleanup = startAnalysis({ autoStart: false });
+      } catch (err) {
         console.error('Failed to trigger analysis:', err);
-        // Still try WebSocket even if API fails
-        const cleanup = startAnalysis();
-        return cleanup;
-      });
-    }
+        if (cancelled) return;
+        // Fall back to starting via WebSocket if the API call fails.
+        cleanup = startAnalysis({ autoStart: true });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (cleanup) cleanup();
+    };
   }, [session, wsConnected, startAnalysis, sessionId]);
 
   useEffect(() => {

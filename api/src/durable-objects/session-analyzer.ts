@@ -15,6 +15,43 @@ interface AnalysisMessage {
 
 type Backend = { provider: string; model: string };
 
+type Workflow = 'roundtable_standard' | 'roundtable_council' | 'role_variant_discussion';
+
+type AnalysisJobTask =
+  | { kind: 'extract_document' }
+  | { kind: 'analyze_persona'; persona_id: string }
+  | { kind: 'discussion_generate_tasks' }
+  | { kind: 'discussion_critique'; from_persona_id: string; target_persona_id: string }
+  | { kind: 'discussion_chair' }
+  | { kind: 'finalize' };
+
+type AnalysisJobState = {
+  session_id: string;
+  file_r2_key: string;
+  file_extension: string;
+  workflow: Workflow;
+  persona_ids: string[];
+  // Stored after extraction (truncated for analysis).
+  document_text: string;
+  document_excerpt: string;
+  // Standard workflow.
+  roundtable_backend?: Backend;
+  // Council workflow.
+  council?: { members: Backend[]; reviewer: Backend; chair: Backend };
+  // Role-variant discussion workflow.
+  discussion?: {
+    persona_group_id: string;
+    variant_backend: Backend;
+    chair_backend: Backend;
+    variant_persona_ids: string[];
+  };
+  tasks: AnalysisJobTask[];
+  created_at: string;
+  updated_at: string;
+};
+
+const JOB_STORAGE_KEY = 'analysis_job_v1';
+
 export class SessionAnalyzer {
   private state: DurableObjectState;
   private env: Env;
@@ -36,9 +73,26 @@ export class SessionAnalyzer {
 
     // Handle direct analysis trigger
     if (request.method === 'POST' && url.pathname === '/start') {
-      const body = await request.json() as { session_id: string };
-      // Start analysis asynchronously
-      this.startAnalysis(body.session_id);
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const sessionId = typeof body?.session_id === 'string' ? body.session_id.trim() : '';
+      if (!sessionId) {
+        return new Response(JSON.stringify({ error: 'session_id is required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Start asynchronously; the alarm will do the heavy work.
+      this.state.waitUntil(this.startAnalysis(sessionId));
       return new Response(JSON.stringify({ message: 'Analysis started' }), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -57,13 +111,527 @@ export class SessionAnalyzer {
       }
 
       // Run asynchronously and broadcast updates over any connected websockets.
-      this.retryPersonaAnalysis(sessionId, personaId);
+      this.state.waitUntil(this.retryPersonaAnalysis(sessionId, personaId));
       return new Response(JSON.stringify({ message: 'Retry started', session_id: sessionId, persona_id: personaId }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
     return new Response('Not found', { status: 404 });
+  }
+
+  private broadcastToAll(msg: any): void {
+    const payload = JSON.stringify(msg);
+    this.websockets.forEach((socket) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(payload);
+      }
+    });
+  }
+
+  private async getJob(): Promise<AnalysisJobState | null> {
+    const job = await this.state.storage.get<AnalysisJobState>(JOB_STORAGE_KEY);
+    return job || null;
+  }
+
+  private async putJob(job: AnalysisJobState | null): Promise<void> {
+    if (!job) {
+      await this.state.storage.delete(JOB_STORAGE_KEY);
+      this.analysisStarted = false;
+      return;
+    }
+    await this.state.storage.put(JOB_STORAGE_KEY, job);
+    this.analysisStarted = true;
+  }
+
+  private async scheduleAlarmSoon(delayMs: number = 50): Promise<void> {
+    await this.state.storage.setAlarm(Date.now() + delayMs);
+  }
+
+  async alarm(): Promise<void> {
+    const job = await this.getJob();
+    if (!job) return;
+
+    const sendMessage = (msg: any) => this.broadcastToAll(msg);
+    const db = new D1Client(this.env.DB);
+
+    const task = job.tasks.shift();
+    if (!task) {
+      await this.putJob(null);
+      return;
+    }
+
+    job.updated_at = new Date().toISOString();
+    await this.putJob(job);
+
+    try {
+      await this.runJobTask(job, task, db, sendMessage);
+    } catch (e) {
+      const err = String(e);
+      console.error(`Job task failed for session ${job.session_id}:`, err);
+      sendMessage({ type: 'error', error: err, session_id: job.session_id });
+      try {
+        await db.updateSession(job.session_id, { error_message: err } as any);
+      } catch {
+        // ignore
+      }
+    }
+
+    const updated = await this.getJob();
+    if (updated && updated.tasks.length > 0) {
+      await this.scheduleAlarmSoon(50);
+      return;
+    }
+    if (updated && updated.tasks.length === 0) {
+      await this.putJob(null);
+    }
+  }
+
+  private async failAllPendingAnalyses(sessionId: string, db: D1Client, errorMessage: string): Promise<void> {
+    const analyses = await db.getAnalyses(sessionId);
+    for (const a of analyses) {
+      if (a.status === 'pending' || a.status === 'running') {
+        await db.updateAnalysis(a.id, {
+          status: 'failed',
+          error_message: errorMessage,
+          completed_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  private async runJobTask(
+    job: AnalysisJobState,
+    task: AnalysisJobTask,
+    db: D1Client,
+    sendMessage: (msg: any) => void
+  ): Promise<void> {
+    switch (task.kind) {
+      case 'extract_document':
+        await this.jobExtractDocument(job, db, sendMessage);
+        return;
+      case 'analyze_persona':
+        await this.jobAnalyzePersona(job, task.persona_id, db, sendMessage);
+        return;
+      case 'discussion_generate_tasks':
+        await this.jobDiscussionGenerateTasks(job, db, sendMessage);
+        return;
+      case 'discussion_critique':
+        await this.jobDiscussionCritique(job, task.from_persona_id, task.target_persona_id, db, sendMessage);
+        return;
+      case 'discussion_chair':
+        await this.jobDiscussionChair(job, db, sendMessage);
+        return;
+      case 'finalize':
+        await this.jobFinalize(job, db, sendMessage);
+        return;
+      default: {
+        const _exhaustive: never = task;
+        throw new Error(`Unhandled job task kind: ${(task as any)?.kind}`);
+      }
+    }
+  }
+
+  private async jobExtractDocument(job: AnalysisJobState, db: D1Client, sendMessage: (msg: any) => void): Promise<void> {
+    const sessionId = job.session_id;
+    const r2Key = (job.file_r2_key || '').trim();
+    if (!r2Key) {
+      const err = 'Missing document storage key';
+      sendMessage({ type: 'error', error: err, session_id: sessionId });
+      await db.updateSession(sessionId, { status: 'failed', error_message: err } as any);
+      await this.failAllPendingAnalyses(sessionId, db, err);
+      sendMessage({ type: 'all_complete', session_id: sessionId });
+      sendMessage({ type: 'status', session_id: sessionId, status: 'failed' });
+      await this.putJob(null);
+      return;
+    }
+
+    const r2Object = await this.env.R2.get(r2Key);
+    if (!r2Object) {
+      const err = 'Document not found in storage';
+      sendMessage({ type: 'error', error: err, session_id: sessionId });
+      await db.updateSession(sessionId, { status: 'failed', error_message: err } as any);
+      await this.failAllPendingAnalyses(sessionId, db, err);
+      sendMessage({ type: 'all_complete', session_id: sessionId });
+      sendMessage({ type: 'status', session_id: sessionId, status: 'failed' });
+      await this.putJob(null);
+      return;
+    }
+
+    const fileBuffer = await r2Object.arrayBuffer();
+    console.log(`Extracting text from document, buffer size: ${fileBuffer.byteLength} bytes`);
+    const extractedDoc = await extractTextFromDocument(fileBuffer, job.file_extension);
+    const documentText = extractedDoc.text || '';
+    console.log(`Extracted document text, length: ${documentText.length}`);
+
+    // Check if extraction returned an error message
+    if (documentText.startsWith('[') && documentText.includes('document:') && documentText.includes('error')) {
+      const err = 'Failed to process document: ' + documentText;
+      console.warn('Document extraction appears to have failed, sending error to frontend');
+      sendMessage({ type: 'error', error: err, session_id: sessionId });
+      await db.updateSession(sessionId, { status: 'failed', error_message: err } as any);
+      await this.failAllPendingAnalyses(sessionId, db, err);
+      sendMessage({ type: 'all_complete', session_id: sessionId });
+      sendMessage({ type: 'status', session_id: sessionId, status: 'failed' });
+      await this.putJob(null);
+      return;
+    }
+
+    // Store truncated text for downstream model calls.
+    const MAX_DOC_CHARS = 8000;
+    const documentForAnalysis = documentText.length > MAX_DOC_CHARS ? documentText.slice(0, MAX_DOC_CHARS) : documentText;
+    if (documentText.length > MAX_DOC_CHARS) {
+      console.log(`Truncated document text for session ${sessionId}: ${documentText.length} -> ${documentForAnalysis.length} chars`);
+    }
+
+    job.document_text = documentForAnalysis;
+    job.document_excerpt = documentText.slice(0, 2000);
+    job.updated_at = new Date().toISOString();
+    await this.putJob(job);
+  }
+
+  private async jobAnalyzePersona(
+    job: AnalysisJobState,
+    personaId: string,
+    db: D1Client,
+    sendMessage: (msg: any) => void
+  ): Promise<void> {
+    const sessionId = job.session_id;
+    if (!job.document_text) {
+      throw new Error('Document text not available (extract_document has not completed)');
+    }
+
+    const persona = await db.getPersona(personaId);
+    if (!persona) {
+      const err = `Persona not found: ${personaId}`;
+      sendMessage({ type: 'error', persona_id: personaId, error: err });
+      const analyses = await db.getAnalyses(sessionId);
+      const analysis = analyses.find((a) => a.persona_id === personaId);
+      if (analysis) {
+        await db.updateAnalysis(analysis.id, {
+          status: 'failed',
+          error_message: err,
+          completed_at: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+
+    if (job.workflow === 'roundtable_council') {
+      if (!job.council) throw new Error('Missing council workflow configuration');
+      await this.analyzePersonaCouncil(sessionId, persona, job.document_text, sendMessage, db, job.council);
+      return;
+    }
+
+    if (job.workflow === 'role_variant_discussion') {
+      if (!job.discussion) throw new Error('Missing discussion workflow configuration');
+      await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.discussion.variant_backend);
+      return;
+    }
+
+    if (!job.roundtable_backend) throw new Error('Missing roundtable backend configuration');
+    await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.roundtable_backend);
+  }
+
+  private async jobDiscussionGenerateTasks(job: AnalysisJobState, db: D1Client, _sendMessage: (msg: any) => void): Promise<void> {
+    if (job.workflow !== 'role_variant_discussion' || !job.discussion) {
+      return;
+    }
+
+    const sessionId = job.session_id;
+    const variantIds = Array.isArray(job.discussion.variant_persona_ids) && job.discussion.variant_persona_ids.length > 0
+      ? job.discussion.variant_persona_ids
+      : job.persona_ids;
+
+    const analyses = await db.getAnalyses(sessionId);
+    const completed = new Set(
+      analyses
+        .filter((a) => a.status === 'completed')
+        .map((a) => String(a.persona_id))
+    );
+
+    const completedVariantIds = variantIds.filter((id) => completed.has(String(id)));
+
+    if (completedVariantIds.length === 0) {
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        content_json: JSON.stringify({ error: 'No completed variant analyses available for discussion synthesis' }),
+      } as any);
+      return;
+    }
+
+    const newTasks: AnalysisJobTask[] = [];
+    if (completedVariantIds.length >= 2) {
+      for (const fromId of completedVariantIds) {
+        for (const targetId of completedVariantIds) {
+          if (targetId === fromId) continue;
+          newTasks.push({ kind: 'discussion_critique', from_persona_id: fromId, target_persona_id: targetId });
+        }
+      }
+    }
+
+    // Always attempt a chair synthesis when at least one candidate exists.
+    newTasks.push({ kind: 'discussion_chair' });
+
+    // Insert before any remaining tasks (typically just finalize).
+    job.tasks = newTasks.concat(job.tasks);
+    job.updated_at = new Date().toISOString();
+    await this.putJob(job);
+  }
+
+  private async jobDiscussionCritique(
+    job: AnalysisJobState,
+    fromPersonaId: string,
+    targetPersonaId: string,
+    db: D1Client,
+    _sendMessage: (msg: any) => void
+  ): Promise<void> {
+    if (!job.discussion) throw new Error('Missing discussion workflow configuration');
+
+    const sessionId = job.session_id;
+    const fromPersona = await db.getPersona(fromPersonaId);
+    const targetPersona = await db.getPersona(targetPersonaId);
+
+    const artifactBase = {
+      session_id: sessionId,
+      persona_id: fromPersonaId,
+      artifact_type: 'discussion_critique',
+      backend_provider: job.discussion.variant_backend.provider,
+      backend_model: job.discussion.variant_backend.model,
+    };
+
+    if (!fromPersona || !targetPersona) {
+      const payload = {
+        from_persona_id: fromPersonaId,
+        target_persona_id: targetPersonaId,
+        error: `Missing persona(s): from=${!!fromPersona} target=${!!targetPersona}`,
+      };
+      await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+      return;
+    }
+
+    const analyses = await db.getAnalyses(sessionId);
+    const targetAnalysis = analyses.find((a) => a.persona_id === targetPersonaId);
+    if (!targetAnalysis || targetAnalysis.status !== 'completed') {
+      const payload = {
+        from_persona_id: fromPersonaId,
+        target_persona_id: targetPersonaId,
+        error: 'Target analysis not completed',
+      };
+      await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+      return;
+    }
+
+    let score: any = null;
+    let issues: any = null;
+    let suggestions: any = null;
+    try { score = targetAnalysis.score_json ? (typeof targetAnalysis.score_json === 'string' ? JSON.parse(targetAnalysis.score_json) : targetAnalysis.score_json) : null; } catch {}
+    try { issues = targetAnalysis.top_issues_json ? (typeof targetAnalysis.top_issues_json === 'string' ? JSON.parse(targetAnalysis.top_issues_json) : targetAnalysis.top_issues_json) : null; } catch {}
+    try { suggestions = targetAnalysis.rewritten_suggestions_json ? (typeof targetAnalysis.rewritten_suggestions_json === 'string' ? JSON.parse(targetAnalysis.rewritten_suggestions_json) : targetAnalysis.rewritten_suggestions_json) : null; } catch {}
+
+    const targetCandidate = {
+      persona_id: targetPersona.id,
+      name: targetPersona.name,
+      role: targetPersona.role,
+      dimension_scores: score,
+      top_3_issues: issues,
+      feedback: suggestions,
+    };
+
+    const MAX_TARGET_JSON_CHARS = 6000;
+    try {
+      const critiqueText = await this.clibridgeCompleteText({
+        provider: job.discussion.variant_backend.provider,
+        model: job.discussion.variant_backend.model,
+        systemPrompt: this.buildDiscussionCritiquePrompt(fromPersona),
+        messages: [{
+          role: 'user',
+          content: JSON.stringify({
+            target_persona_id: targetPersonaId,
+            target_analysis: targetCandidate,
+          }).slice(0, MAX_TARGET_JSON_CHARS),
+        }],
+      });
+
+      const critiqueJson = JSON.parse(critiqueText);
+      const payload = {
+        from_persona_id: fromPersonaId,
+        target_persona_id: targetPersonaId,
+        critique: critiqueJson,
+      };
+      await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+    } catch (e) {
+      const payload = {
+        from_persona_id: fromPersonaId,
+        target_persona_id: targetPersonaId,
+        error: String(e),
+      };
+      await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+    }
+  }
+
+  private async jobDiscussionChair(job: AnalysisJobState, db: D1Client, sendMessage: (msg: any) => void): Promise<void> {
+    if (!job.discussion) throw new Error('Missing discussion workflow configuration');
+
+    const sessionId = job.session_id;
+    const variantIds = Array.isArray(job.discussion.variant_persona_ids) && job.discussion.variant_persona_ids.length > 0
+      ? job.discussion.variant_persona_ids
+      : job.persona_ids;
+
+    const variants: any[] = [];
+    for (const id of variantIds) {
+      const p = await db.getPersona(String(id));
+      if (p) variants.push(p);
+    }
+    if (variants.length === 0) {
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        content_json: JSON.stringify({ error: 'No variant personas found for discussion synthesis' }),
+      } as any);
+      return;
+    }
+
+    const analyses = await db.getAnalyses(sessionId);
+    const byPersona: Record<string, any> = {};
+    for (const a of analyses) {
+      if (!a.persona_id) continue;
+      byPersona[a.persona_id] = a;
+    }
+
+    const candidates: any[] = [];
+    for (const v of variants) {
+      const a = byPersona[v.id];
+      if (!a || a.status !== 'completed') continue;
+
+      let score: any = null;
+      let issues: any = null;
+      let suggestions: any = null;
+      try { score = a.score_json ? (typeof a.score_json === 'string' ? JSON.parse(a.score_json) : a.score_json) : null; } catch {}
+      try { issues = a.top_issues_json ? (typeof a.top_issues_json === 'string' ? JSON.parse(a.top_issues_json) : a.top_issues_json) : null; } catch {}
+      try { suggestions = a.rewritten_suggestions_json ? (typeof a.rewritten_suggestions_json === 'string' ? JSON.parse(a.rewritten_suggestions_json) : a.rewritten_suggestions_json) : null; } catch {}
+
+      candidates.push({
+        persona_id: v.id,
+        name: v.name,
+        role: v.role,
+        dimension_scores: score,
+        top_3_issues: issues,
+        feedback: suggestions,
+      });
+    }
+
+    if (candidates.length === 0) {
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        content_json: JSON.stringify({ error: 'No completed variant analyses available for discussion synthesis' }),
+      } as any);
+      return;
+    }
+
+    const critiqueArtifacts = await db.getAnalysisArtifacts(sessionId, { artifact_type: 'discussion_critique' });
+    const critiques: any[] = [];
+    for (const a of critiqueArtifacts) {
+      const raw = (a as any)?.content_json;
+      if (raw == null) continue;
+      if (typeof raw === 'object') {
+        critiques.push(raw);
+        continue;
+      }
+      if (typeof raw === 'string') {
+        try {
+          critiques.push(JSON.parse(raw));
+        } catch {
+          critiques.push(raw);
+        }
+      }
+    }
+
+    const role = String(variants[0]?.role || 'Role').trim() || 'Role';
+    let chairJson: any;
+    try {
+      const chairText = await this.clibridgeCompleteText({
+        provider: job.discussion.chair_backend.provider,
+        model: job.discussion.chair_backend.model,
+        systemPrompt: this.buildDiscussionChairPrompt(role),
+        messages: [{
+          role: 'user',
+          content: JSON.stringify({
+            persona_group_id: job.discussion.persona_group_id || null,
+            candidates,
+            critiques,
+            doc_excerpt: job.document_excerpt || '',
+          }),
+        }],
+      });
+      chairJson = JSON.parse(chairText);
+    } catch (e) {
+      const err = String(e);
+      console.error('Discussion chair synthesis failed:', err);
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        content_json: JSON.stringify({ error: err }),
+      } as any);
+      return;
+    }
+
+    const finalObj = chairJson?.final;
+    const dissents = Array.isArray(chairJson?.dissents) ? chairJson.dissents : [];
+    if (!finalObj || typeof finalObj !== 'object') {
+      await db.createAnalysisArtifact({
+        session_id: sessionId,
+        persona_id: 'discussion',
+        artifact_type: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        content_json: JSON.stringify({ error: 'Discussion chair did not return a valid final object' }),
+      } as any);
+      return;
+    }
+
+    const normalizedFinal = this.normalizeResult(finalObj, variants[0]);
+
+    await db.createAnalysisArtifact({
+      session_id: sessionId,
+      persona_id: 'discussion',
+      artifact_type: 'discussion_chair_final',
+      backend_provider: job.discussion.chair_backend.provider,
+      backend_model: job.discussion.chair_backend.model,
+      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, final: normalizedFinal }),
+    } as any);
+
+    await db.createAnalysisArtifact({
+      session_id: sessionId,
+      persona_id: 'discussion',
+      artifact_type: 'discussion_dissents',
+      backend_provider: job.discussion.chair_backend.provider,
+      backend_model: job.discussion.chair_backend.model,
+      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, dissents }),
+    } as any);
+
+    sendMessage({ type: 'complete', persona_id: 'discussion', result: { final: normalizedFinal, dissents } });
+  }
+
+  private async jobFinalize(job: AnalysisJobState, db: D1Client, sendMessage: (msg: any) => void): Promise<void> {
+    const sessionId = job.session_id;
+    sendMessage({ type: 'all_complete', session_id: sessionId });
+    await this.updateSessionFinalStatus(sessionId, db, sendMessage);
+    await this.putJob(null);
   }
 
   private async handleWebSocket(request: Request): Promise<Response> {
@@ -105,12 +673,6 @@ export class SessionAnalyzer {
   }
 
   private async startAnalysis(sessionId: string, ws?: WebSocket, requesterEmail?: string, requireOwner: boolean = false): Promise<void> {
-    // Prevent duplicate analysis starts
-    if (this.analysisStarted) {
-      console.log(`Analysis already started for session ${sessionId}, ignoring duplicate request`);
-      return;
-    }
-
     const db = new D1Client(this.env.DB);
 
     const sendMessage = (msg: any) => {
@@ -119,33 +681,34 @@ export class SessionAnalyzer {
         ws.send(JSON.stringify(msg));
         return;
       }
-      
+
       // Otherwise broadcast to all connected websockets (excluding the specific one if it exists)
-      this.websockets.forEach(socket => {
+      this.websockets.forEach((socket) => {
         if (socket !== ws && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify(msg));
         }
       });
     };
 
-    try {
-      // Get session
+    await this.state.blockConcurrencyWhile(async () => {
+      const existingJob = await this.getJob();
+      if (existingJob && existingJob.session_id === sessionId) {
+        console.log(`Analysis job already queued for session ${sessionId}; ensuring alarm is scheduled`);
+        await this.scheduleAlarmSoon(50);
+        this.analysisStarted = true;
+        return;
+      }
+
       const session = await db.getSession(sessionId);
       if (!session) {
-        sendMessage({
-          type: 'error',
-          error: 'Session not found',
-        });
+        sendMessage({ type: 'error', error: 'Session not found' });
         return;
       }
 
       if (requireOwner) {
         const email = requesterEmail || 'anonymous';
         if (session.user_email !== email) {
-          sendMessage({
-            type: 'error',
-            error: 'Only the owner can start analysis',
-          });
+          sendMessage({ type: 'error', error: 'Only the owner can start analysis' });
           return;
         }
       }
@@ -156,8 +719,8 @@ export class SessionAnalyzer {
       }
 
       const workflowRaw = (session.workflow || '').trim().toLowerCase();
-      const workflow = (workflowRaw === 'roundtable_council' || workflowRaw === 'role_variant_discussion' || workflowRaw === 'roundtable_standard')
-        ? workflowRaw
+      const workflow: Workflow = (workflowRaw === 'roundtable_council' || workflowRaw === 'role_variant_discussion' || workflowRaw === 'roundtable_standard')
+        ? (workflowRaw as Workflow)
         : 'roundtable_standard';
 
       let analysisConfig: any = {};
@@ -194,19 +757,10 @@ export class SessionAnalyzer {
       if (!backendValidation.ok) {
         const errorMessage = backendValidation.error;
         sendMessage({ type: 'error', error: errorMessage });
-        await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage });
-
-        // Mark all pending analyses as failed so the UI has a consistent state.
-        const analyses = await db.getAnalyses(sessionId);
-        for (const analysis of analyses) {
-          if (analysis.status === 'pending' || analysis.status === 'running') {
-            await db.updateAnalysis(analysis.id, {
-              status: 'failed',
-              error_message: errorMessage,
-              completed_at: new Date().toISOString(),
-            });
-          }
-        }
+        await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage } as any);
+        await this.failAllPendingAnalyses(sessionId, db, errorMessage);
+        sendMessage({ type: 'all_complete', session_id: sessionId });
+        sendMessage({ type: 'status', session_id: sessionId, status: 'failed' });
         return;
       }
 
@@ -224,213 +778,114 @@ export class SessionAnalyzer {
 
       // Workflow plan
       let sessionDisplayBackend: Backend = validatedBackend;
-      let roundtableBackend: Backend = validatedBackend; // used for standard
-
-      let councilMembers: Backend[] = [validatedBackend];
-      let councilReviewer: Backend = validatedBackend;
-      let councilChair: Backend = validatedBackend;
-
-      let discussionVariantBackend: Backend = validatedBackend;
-      let discussionChair: Backend = validatedBackend;
-      let discussionGroupId: string = '';
+      let roundtableBackend: Backend = validatedBackend;
+      let councilCfg: AnalysisJobState['council'] | undefined;
+      let discussionCfg: AnalysisJobState['discussion'] | undefined;
 
       if (workflow === 'roundtable_council') {
-        const councilCfg = (analysisConfig && typeof analysisConfig === 'object')
+        const council = (analysisConfig && typeof analysisConfig === 'object')
           ? ((analysisConfig.council && typeof analysisConfig.council === 'object') ? analysisConfig.council : analysisConfig)
           : {};
 
-        const membersRaw = Array.isArray(councilCfg.members) ? councilCfg.members : [];
+        const membersRaw = Array.isArray(council.members) ? council.members : [];
         const members: Backend[] = [];
         for (const m of membersRaw) {
           const b = parseBackend(m);
           if (b) members.push(b);
         }
-        councilMembers = members.length > 0 ? members : [validatedBackend];
 
-        councilChair = parseBackend(councilCfg.chair_backend || councilCfg.chair) || validatedBackend;
-        councilReviewer = parseBackend(councilCfg.reviewer_backend || councilCfg.reviewer) || councilChair;
-        sessionDisplayBackend = councilChair;
+        const chair = parseBackend(council.chair_backend || council.chair) || validatedBackend;
+        const reviewer = parseBackend(council.reviewer_backend || council.reviewer) || chair;
+        councilCfg = { members: members.length > 0 ? members : [validatedBackend], reviewer, chair };
+        sessionDisplayBackend = chair;
       } else if (workflow === 'role_variant_discussion') {
-        const discussionCfg = (analysisConfig && typeof analysisConfig === 'object')
+        const discussion = (analysisConfig && typeof analysisConfig === 'object')
           ? ((analysisConfig.discussion && typeof analysisConfig.discussion === 'object') ? analysisConfig.discussion : analysisConfig)
           : {};
 
-        discussionVariantBackend = parseBackend(discussionCfg.variant_backend || discussionCfg.variant) || validatedBackend;
-        discussionChair = parseBackend(discussionCfg.chair_backend || discussionCfg.chair) || validatedBackend;
-        discussionGroupId = typeof discussionCfg.persona_group_id === 'string' ? discussionCfg.persona_group_id.trim() : '';
-        sessionDisplayBackend = discussionChair;
+        const variantBackend = parseBackend(discussion.variant_backend || discussion.variant) || validatedBackend;
+        const chairBackend = parseBackend(discussion.chair_backend || discussion.chair) || validatedBackend;
+        const groupId = typeof discussion.persona_group_id === 'string' ? discussion.persona_group_id.trim() : '';
+        discussionCfg = {
+          persona_group_id: groupId,
+          variant_backend: variantBackend,
+          chair_backend: chairBackend,
+          variant_persona_ids: [],
+        };
+        sessionDisplayBackend = chairBackend;
       } else {
         roundtableBackend = validatedBackend;
         sessionDisplayBackend = validatedBackend;
       }
 
-      console.log(`Analysis workflow for session ${sessionId}:`, { workflow, sessionBackend: sessionDisplayBackend });
+      // Parse selected personas
+      let selectedPersonaIds: string[] = [];
+      try {
+        const ids = JSON.parse(session.selected_persona_ids || '[]');
+        if (Array.isArray(ids)) {
+          selectedPersonaIds = ids.map((id) => String(id)).filter(Boolean);
+        }
+      } catch {
+        selectedPersonaIds = [];
+      }
 
-      this.analysisStarted = true;
-      console.log(`Starting analysis for session ${sessionId}`);
-      
-      // Update session status
+      if (discussionCfg) {
+        discussionCfg.variant_persona_ids = selectedPersonaIds;
+      }
+
+      if (selectedPersonaIds.length === 0) {
+        const errorMessage = 'No valid personas found';
+        sendMessage({ type: 'error', error: errorMessage });
+        await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage } as any);
+        await this.failAllPendingAnalyses(sessionId, db, errorMessage);
+        sendMessage({ type: 'all_complete', session_id: sessionId });
+        sendMessage({ type: 'status', session_id: sessionId, status: 'failed' });
+        return;
+      }
+
+      console.log(`Queueing analysis job for session ${sessionId}:`, { workflow, sessionBackend: sessionDisplayBackend });
+
       await db.updateSession(sessionId, {
         status: 'analyzing',
         analysis_provider: sessionDisplayBackend.provider,
         analysis_model: sessionDisplayBackend.model,
         error_message: null as any,
-      });
+      } as any);
       sendMessage({ type: 'status', session_id: sessionId, status: 'analyzing' });
 
-      // Best-effort: persist backend on all per-persona analyses for reporting, even if a persona never starts.
-      try {
-        const existingAnalyses = await db.getAnalyses(sessionId);
-        const perAnalysisBackend = workflow === 'role_variant_discussion' ? discussionVariantBackend : sessionDisplayBackend;
-        for (const a of existingAnalyses) {
-          await db.updateAnalysis(a.id, {
-            analysis_provider: perAnalysisBackend.provider,
-            analysis_model: perAnalysisBackend.model,
-          });
-        }
-      } catch (e) {
-        console.warn(`Failed to persist analysis backend on analyses for session ${sessionId}:`, e);
-      }
+      const now = new Date().toISOString();
+      const tasks: AnalysisJobTask[] = [
+        { kind: 'extract_document' },
+        ...selectedPersonaIds.map((id) => ({ kind: 'analyze_persona', persona_id: id }) as AnalysisJobTask),
+        ...(workflow === 'role_variant_discussion' ? ([{ kind: 'discussion_generate_tasks' }] as AnalysisJobTask[]) : []),
+        { kind: 'finalize' },
+      ];
 
-      // Get document from R2
-      const r2Object = await this.env.R2.get(session.file_r2_key);
-      if (!r2Object) {
-        sendMessage({
-          type: 'error',
-          error: 'Document not found in storage',
-        });
-        await db.updateSession(sessionId, { status: 'failed' });
-        return;
-      }
-
-      // Extract text
-      const fileBuffer = await r2Object.arrayBuffer();
-      console.log(`Extracting text from document, buffer size: ${fileBuffer.byteLength} bytes`);
-      const extractedDoc = await extractTextFromDocument(
-        fileBuffer,
-        session.file_extension
-      );
-      const documentText = extractedDoc.text;
-      console.log(`Extracted document text, length: ${documentText.length}`);
-      console.log(`First 200 chars of document: ${documentText.substring(0, 200)}`);
-      
-      // Check if extraction returned an error message
-      if (documentText.startsWith('[') && documentText.includes('document:') && documentText.includes('error')) {
-        console.warn('Document extraction appears to have failed, sending error to frontend');
-        sendMessage({
-          type: 'error',
-          error: 'Failed to process document: ' + documentText,
-        });
-        await db.updateSession(sessionId, { status: 'failed' });
-        return;
-      }
-
-      // Get personas
-      const selectedPersonaIds = JSON.parse(session.selected_persona_ids);
-      const personas = [];
-      for (const personaId of selectedPersonaIds) {
-        const persona = await db.getPersona(personaId);
-        if (persona) {
-          personas.push(persona);
-        }
-      }
-
-      if (personas.length === 0) {
-        sendMessage({
-          type: 'error',
-          error: 'No valid personas found',
-        });
-        await db.updateSession(sessionId, { status: 'failed' });
-        return;
-      }
-
-      // Start analyses with limited concurrency to avoid Cloudflare subrequest limits
-      const maxConcurrency = 2; // Reduce to 2 concurrent analyses to be more conservative
-
-      if (workflow === 'roundtable_council') {
-        for (let i = 0; i < personas.length; i += maxConcurrency) {
-          const batch = personas.slice(i, i + maxConcurrency);
-          const analysisPromises = batch.map(persona =>
-            this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, {
-              members: councilMembers,
-              reviewer: councilReviewer,
-              chair: councilChair,
-            })
-          );
-          await Promise.all(analysisPromises);
-        }
-      } else {
-        const perPersonaBackend = workflow === 'role_variant_discussion' ? discussionVariantBackend : roundtableBackend;
-        for (let i = 0; i < personas.length; i += maxConcurrency) {
-          const batch = personas.slice(i, i + maxConcurrency);
-          const analysisPromises = batch.map(persona =>
-            this.analyzePersona(sessionId, persona, documentText, sendMessage, db, perPersonaBackend)
-          );
-          await Promise.all(analysisPromises);
-        }
-
-        // Discussion workflow adds a second stage: cross-critique + chair synthesis.
-        if (workflow === 'role_variant_discussion') {
-          await this.runRoleVariantDiscussionSynthesis(sessionId, personas, discussionGroupId, documentText, sendMessage, db, {
-            variantBackend: discussionVariantBackend,
-            chairBackend: discussionChair,
-          });
-        }
-      }
-
-      // All complete
-      sendMessage({
-        type: 'all_complete',
+      const job: AnalysisJobState = {
         session_id: sessionId,
-      });
+        file_r2_key: session.file_r2_key,
+        file_extension: session.file_extension,
+        workflow,
+        persona_ids: selectedPersonaIds,
+        document_text: '',
+        document_excerpt: '',
+        ...(workflow === 'roundtable_council'
+          ? { council: councilCfg || { members: [validatedBackend], reviewer: validatedBackend, chair: validatedBackend } }
+          : {}),
+        ...(workflow === 'role_variant_discussion'
+          ? { discussion: discussionCfg || { persona_group_id: '', variant_backend: validatedBackend, chair_backend: validatedBackend, variant_persona_ids: selectedPersonaIds } }
+          : {}),
+        ...(workflow === 'roundtable_standard' ? { roundtable_backend: roundtableBackend } : {}),
+        tasks,
+        created_at: now,
+        updated_at: now,
+      };
 
-      // Set session status based on analysis outcomes
-      const finalAnalyses = await db.getAnalyses(sessionId);
-      const failedCount = finalAnalyses.filter(a => a.status === 'failed').length;
-      const completedCount = finalAnalyses.filter(a => a.status === 'completed').length;
-
-      let finalStatus: 'completed' | 'failed' | 'partial' = 'completed';
-      if (finalAnalyses.length > 0 && failedCount === finalAnalyses.length) {
-        finalStatus = 'failed';
-      } else if (failedCount > 0) {
-        finalStatus = 'partial';
-      } else if (completedCount === finalAnalyses.length) {
-        finalStatus = 'completed';
-      }
-
-      await db.updateSession(sessionId, { status: finalStatus });
-      sendMessage({ type: 'status', session_id: sessionId, status: finalStatus });
-
-  } catch (error) {
-    const errorMessage = String(error);
-    console.error('Analysis failed:', errorMessage);
-    
-    // Provide more context for common errors
-    let userFriendlyError = errorMessage;
-    if (errorMessage.includes('Too many subrequests')) {
-      userFriendlyError = 'System is processing too many requests simultaneously. Please try again with fewer personas selected.';
-    }
-    
-    console.log('Sending session error message:', userFriendlyError);
-    sendMessage({
-      type: 'error',
-      error: userFriendlyError,
+      await this.putJob(job);
+      await this.scheduleAlarmSoon(50);
+      this.analysisStarted = true;
     });
-    await db.updateSession(sessionId, { status: 'failed', error_message: errorMessage });
-    
-    // Mark all pending analyses as failed
-    const analyses = await db.getAnalyses(sessionId);
-    for (const analysis of analyses) {
-      if (analysis.status === 'pending' || analysis.status === 'running') {
-        await db.updateAnalysis(analysis.id, {
-          status: 'failed',
-          error_message: errorMessage,
-          completed_at: new Date().toISOString(),
-        });
-      }
-    }
   }
-}
 
   private async parseRoundtableResultFromText(fullResponse: string, persona: any): Promise<any> {
     const trimmed = (fullResponse || '').trim();
@@ -1219,10 +1674,11 @@ Respond with ONLY valid JSON:
     let finalStatus: 'completed' | 'failed' | 'partial' = 'completed';
     if (finalAnalyses.length > 0 && failedCount === finalAnalyses.length) {
       finalStatus = 'failed';
-    } else if (failedCount > 0) {
-      finalStatus = 'partial';
     } else if (completedCount === finalAnalyses.length) {
       finalStatus = 'completed';
+    } else {
+      // Covers mixes (some failed/some completed) and any unexpected leftovers (pending/running).
+      finalStatus = 'partial';
     }
 
     await db.updateSession(sessionId, {

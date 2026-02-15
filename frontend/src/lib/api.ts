@@ -241,6 +241,7 @@ export class AnalysisWebSocket {
   private sessionId: string;
   private onMessage: (data: any) => void;
   private onError: (error: any) => void;
+  private autoStart: boolean;
   private reconnectAttempts = 0;
   private maxReconnects = 3;
   private reconnectTimeouts = [2000, 4000, 8000]; // Exponential backoff
@@ -250,11 +251,13 @@ export class AnalysisWebSocket {
   constructor(
     sessionId: string,
     onMessage: (data: any) => void,
-    onError: (error: any) => void
+    onError: (error: any) => void,
+    options?: { autoStart?: boolean }
   ) {
     this.sessionId = sessionId;
     this.onMessage = onMessage;
     this.onError = onError;
+    this.autoStart = options?.autoStart ?? true;
   }
 
   connect(): void {
@@ -270,7 +273,7 @@ export class AnalysisWebSocket {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       // Start analysis only if not already started
-      if (!this.analysisStarted) {
+      if (this.autoStart && !this.analysisStarted) {
         this.analysisStarted = true;
         this.send({ action: 'start_analysis', session_id: this.sessionId });
       }
