@@ -24,6 +24,14 @@ export interface Env {
 const app = new Hono<{ Bindings: Env }>();
 const BUILD_DATE = new Date().toISOString();
 
+function safeBuildDate(): string {
+  // Some deployments have reported epoch timestamps (1970) due to build/runtime quirks.
+  // Prefer the module init timestamp, but fall back to "now" when it looks invalid.
+  if (!BUILD_DATE) return new Date().toISOString();
+  if (BUILD_DATE.startsWith('1970-01-01')) return new Date().toISOString();
+  return BUILD_DATE;
+}
+
 // CORS middleware
 app.use('*', cors({
   origin: ['https://roundtable.browsium.com', 'http://localhost:3000'],
@@ -38,7 +46,7 @@ app.get('/', (c) => c.json({ status: 'ok', service: 'roundtable-api' }));
 // Version endpoint
 app.get('/version', (c) => c.json({
   version: pkg.version,
-  build_date: BUILD_DATE,
+  build_date: safeBuildDate(),
   environment: 'production',
   service: 'roundtable-api'
 }));
