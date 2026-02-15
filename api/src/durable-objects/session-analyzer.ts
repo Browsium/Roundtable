@@ -618,7 +618,50 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
 
       const usable = candidates.filter((c) => c.parsed && typeof c.parsed === 'object');
       if (usable.length === 0) {
-        throw new Error('No usable candidate JSON produced by council members');
+        // Council members sometimes ignore JSON-only instructions (or return invalid JSON). Rather than
+        // failing the persona outright, fall back to running a single direct analysis using the chair backend.
+        // This preserves a usable user experience while still recording member outputs as artifacts.
+        try {
+          console.warn(`Council produced no usable JSON for ${persona.id}; falling back to chair direct analysis`);
+          const fallbackText = await this.clibridgeCompleteText({
+            provider: council.chair.provider,
+            model: council.chair.model,
+            systemPrompt,
+            messages: [{ role: 'user', content: documentForAnalysis }],
+          });
+          const fallbackResult = await this.parseRoundtableResultFromText(fallbackText, persona);
+
+          await db.createAnalysisArtifact({
+            session_id: sessionId,
+            persona_id: persona.id,
+            artifact_type: 'council_fallback_direct',
+            backend_provider: council.chair.provider,
+            backend_model: council.chair.model,
+            content_json: JSON.stringify({ raw: fallbackText, parsed: fallbackResult }),
+          } as any);
+
+          sendMessage({ type: 'complete', persona_id: persona.id, result: fallbackResult });
+
+          await db.updateAnalysis(analysis.id, {
+            status: 'completed',
+            analysis_provider: council.chair.provider,
+            analysis_model: council.chair.model,
+            error_message: null as any,
+            score_json: JSON.stringify(fallbackResult.dimension_scores || {}),
+            top_issues_json: JSON.stringify(fallbackResult.top_3_issues || []),
+            rewritten_suggestions_json: JSON.stringify({
+              what_works_well: fallbackResult.what_works_well || [],
+              overall_verdict: fallbackResult.overall_verdict || '',
+              rewritten_headline: fallbackResult.rewritten_headline_suggestion || '',
+            }),
+            completed_at: new Date().toISOString(),
+          });
+
+          return;
+        } catch (e) {
+          console.warn(`Council fallback direct analysis failed for ${persona.id}`, e);
+          throw new Error('No usable candidate JSON produced by council members');
+        }
       }
 
       // Reviewer step (best-effort)

@@ -193,6 +193,11 @@ function SessionDetailContent() {
   }, [session?.status, loadSession]);
 
   const handleRetry = async (_personaId: string, _analysisId: number) => {
+    if (session?.status === 'analyzing') {
+      setError('Wait for the current analysis run to finish before retrying a persona.');
+      return;
+    }
+
     try {
       setError(null);
       setRetryingId(_analysisId);
@@ -843,7 +848,8 @@ function SessionDetailContent() {
                         e.stopPropagation();
                         handleRetry(analysis.persona_id, analysis.id);
                       }}
-                      disabled={retryingId === analysis.id}
+                      disabled={retryingId === analysis.id || session?.status === 'analyzing'}
+                      title={session?.status === 'analyzing' ? 'Retry is available after the current run finishes' : 'Retry'}
                       className="ml-2 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded text-blue-700 bg-blue-100 hover:bg-blue-200"
                     >
                       {retryingId === analysis.id ? (
