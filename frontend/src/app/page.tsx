@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FileText, Users, ArrowRight, Check, AlertCircle } from 'lucide-react';
+import { Upload, FileText, Users, ArrowRight, Check, AlertCircle, ChevronDown } from 'lucide-react';
 import { personaApi, sessionApi, r2Api, settingsApi, clibridgeApi } from '@/lib/api';
 import type { Persona } from '@/lib/types';
 import { useRouter } from 'next/navigation';
@@ -27,6 +27,8 @@ export default function Home() {
   const [useCouncil, setUseCouncil] = useState(true);
   const [councilMemberIds, setCouncilMemberIds] = useState<string[]>(['claude-sonnet']);
   const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean> | null>(null);
+  const [analysisBackendOpen, setAnalysisBackendOpen] = useState(false);
+  const analysisBackendRef = useRef<HTMLDivElement | null>(null);
 
   // Load personas on mount
   const loadPersonas = useCallback(async () => {
@@ -86,6 +88,12 @@ export default function Home() {
     if (preset.disabled) return true;
     return isPresetUnavailable(preset.provider);
   };
+
+  useEffect(() => {
+    if (!analysisBackendOpen) return;
+    // Ensure the expanded section is visible on smaller screens.
+    analysisBackendRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [analysisBackendOpen]);
 
   // File upload handling
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -198,11 +206,11 @@ export default function Home() {
         workflow = 'roundtable_standard';
       }
 
-      // Create session (metadata only, no file)
-      const session = await sessionApi.create(
-        file.name,
-        file.size,
-        fileExtension,
+       // Create session (metadata only, no file)
+       const session = await sessionApi.create(
+         file.name,
+         file.size,
+         fileExtension,
         selectedPersonas,
         analysisProvider.trim(),
         analysisModel.trim(),
@@ -303,116 +311,12 @@ export default function Home() {
             >
               {selectedPersonas.length === personas.length ? 'Deselect All' : 'Select All'}
             </button>
-          </div>
+           </div>
 
-          <div className="bg-white border rounded-lg p-4">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <h4 className="font-medium text-gray-900">Analysis Backend</h4>
-                <p className="text-sm text-gray-600 mt-1">
-                  Applies to this document. You can change defaults in Settings.
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  DeepSeek/Kimi/MiniMax/Nemotron presets are routed via CLIBridge provider <span className="font-mono">opencode</span>.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-600">Preset</label>
-                  <select
-                    value={analysisPreset}
-                    onChange={(e) => handlePresetChange(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {MODEL_PRESETS.map(p => (
-                      <option
-                        key={p.id}
-                        value={p.id}
-                        disabled={!!p.disabled || isPresetUnavailable(p.provider)}
-                      >
-                        {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
-                <input
-                  type="text"
-                  value={analysisProvider}
-                  onChange={(e) => {
-                    setAnalysisPreset('custom');
-                    setAnalysisProvider(e.target.value);
-                  }}
-                  disabled={analysisPreset !== 'custom'}
-                  className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
-                <input
-                  type="text"
-                  value={analysisModel}
-                  onChange={(e) => {
-                    setAnalysisPreset('custom');
-                    setAnalysisModel(e.target.value);
-                  }}
-                  disabled={analysisPreset !== 'custom'}
-                  className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 border-t pt-4">
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Council Mode</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    When enabled, each persona is run across multiple models and a chairman synthesizes one final answer per persona.
-                  </p>
-                </div>
-                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={useCouncil}
-                    onChange={(e) => setUseCouncil(e.target.checked)}
-                  />
-                  Enable council
-                </label>
-              </div>
-
-              {useCouncil && (
-                <div className="mt-3">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Council members</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {MODEL_PRESETS.filter(p => !isPresetDisabled(p) && p.id !== 'custom').map((p) => (
-                      <label
-                        key={p.id}
-                        className="inline-flex items-center gap-2 px-3 py-2 border rounded-md bg-white text-sm cursor-pointer hover:bg-gray-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={councilMemberIds.includes(p.id)}
-                          onChange={() => toggleCouncilMember(p.id)}
-                        />
-                        <span>{p.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Chairman uses the selected provider/model above. Reviewer defaults to chairman.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {personas.map((persona) => (
-              <div
-                key={persona.id}
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+             {personas.map((persona) => (
+               <div
+                 key={persona.id}
                 onClick={() => handlePersonaToggle(persona.id)}
                 className={`p-4 border-2 rounded-lg cursor-pointer transition-all
                   ${selectedPersonas.includes(persona.id)
@@ -453,14 +357,148 @@ export default function Home() {
                           })()}
                         </div>
                 </div>
-              </div>
-            ))}
-          </div>
+               </div>
+             ))}
+           </div>
 
-          <div className="flex items-center justify-between pt-6 border-t">
-            <button
-              onClick={() => setStep('upload')}
-              className="text-gray-600 hover:text-gray-900 font-medium"
+           <div
+             ref={analysisBackendRef}
+             className="bg-white border rounded-lg overflow-hidden"
+           >
+             <button
+               type="button"
+               onClick={() => setAnalysisBackendOpen((v) => !v)}
+               aria-expanded={analysisBackendOpen}
+               className="w-full p-4 text-left flex items-start justify-between gap-4 hover:bg-gray-50"
+             >
+               <div className="min-w-0">
+                 <p className="text-sm font-medium text-gray-900">Analysis Backend</p>
+                 <p className="text-xs text-gray-600 mt-1">
+                   {analysisPreset === 'custom'
+                     ? `${analysisProvider.trim() || 'provider'} / ${analysisModel.trim() || 'model'}`
+                     : (MODEL_PRESETS.find((p) => p.id === analysisPreset)?.label || analysisPreset)}
+                   {useCouncil ? ` • Council: on (${councilMemberIds.length})` : ' • Council: off'}
+                 </p>
+               </div>
+               <ChevronDown
+                 className={`h-5 w-5 text-gray-500 shrink-0 transition-transform ${analysisBackendOpen ? 'rotate-180' : ''}`}
+               />
+             </button>
+
+             <div
+               className={`transition-[max-height] duration-300 ease-in-out overflow-hidden ${
+                 analysisBackendOpen ? 'max-h-[520px]' : 'max-h-0'
+               }`}
+             >
+               <div className="p-4 border-t max-h-[520px] overflow-y-auto space-y-4">
+                 <div className="flex items-start justify-between gap-4 flex-wrap">
+                   <div>
+                     <p className="text-sm text-gray-700">
+                       Applies to this document. You can change defaults in Settings.
+                     </p>
+                     <p className="text-xs text-gray-500 mt-1">
+                       DeepSeek/Kimi/MiniMax/Nemotron presets are routed via CLIBridge provider <span className="font-mono">opencode</span>.
+                     </p>
+                   </div>
+                   <div className="flex items-center gap-2">
+                     <label className="text-sm text-gray-600">Preset</label>
+                     <select
+                       value={analysisPreset}
+                       onChange={(e) => handlePresetChange(e.target.value)}
+                       className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     >
+                       {MODEL_PRESETS.map(p => (
+                         <option
+                           key={p.id}
+                           value={p.id}
+                           disabled={!!p.disabled || isPresetUnavailable(p.provider)}
+                         >
+                           {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
+                         </option>
+                       ))}
+                     </select>
+                   </div>
+                 </div>
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                     <input
+                       type="text"
+                       value={analysisProvider}
+                       onChange={(e) => {
+                         setAnalysisPreset('custom');
+                         setAnalysisProvider(e.target.value);
+                       }}
+                       disabled={analysisPreset !== 'custom'}
+                       className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
+                     />
+                   </div>
+                   <div>
+                     <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
+                     <input
+                       type="text"
+                       value={analysisModel}
+                       onChange={(e) => {
+                         setAnalysisPreset('custom');
+                         setAnalysisModel(e.target.value);
+                       }}
+                       disabled={analysisPreset !== 'custom'}
+                       className="w-full px-3 py-2 border rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500 font-mono text-sm"
+                     />
+                   </div>
+                 </div>
+
+                 <div className="border-t pt-4">
+                   <div className="flex items-center justify-between gap-4 flex-wrap">
+                     <div>
+                       <p className="text-sm font-medium text-gray-900">Council Mode</p>
+                       <p className="text-xs text-gray-500 mt-1">
+                         When enabled, each persona is run across multiple models and a chairman synthesizes one final answer per persona.
+                       </p>
+                     </div>
+                     <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                       <input
+                         type="checkbox"
+                         checked={useCouncil}
+                         onChange={(e) => setUseCouncil(e.target.checked)}
+                       />
+                       Enable council
+                     </label>
+                   </div>
+
+                   {useCouncil && (
+                     <div className="mt-3">
+                       <p className="text-sm font-medium text-gray-700 mb-2">Council members</p>
+                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                         {MODEL_PRESETS.filter(p => !isPresetDisabled(p) && p.id !== 'custom').map((p) => (
+                           <label
+                             key={p.id}
+                             className="inline-flex items-center gap-2 px-3 py-2 border rounded-md bg-white text-sm cursor-pointer hover:bg-gray-50"
+                           >
+                             <input
+                               type="checkbox"
+                               checked={councilMemberIds.includes(p.id)}
+                               onChange={() => toggleCouncilMember(p.id)}
+                             />
+                             <span>{p.label}</span>
+                           </label>
+                         ))}
+                       </div>
+                       <p className="text-xs text-gray-500 mt-2">
+                         Chairman uses the selected provider/model above. Reviewer defaults to chairman.
+                       </p>
+                     </div>
+                   )}
+                 </div>
+               </div>
+             </div>
+           </div>
+
+           <div className="flex items-center justify-between pt-6 border-t">
+             <button
+               onClick={() => setStep('upload')}
+                className="text-gray-600 hover:text-gray-900 font-medium"
             >
               ← Back to upload
             </button>
