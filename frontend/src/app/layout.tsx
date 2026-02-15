@@ -6,7 +6,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Persona Roundtable - AI-Powered Marketing Review",
+  title: "AI-Powered Content Reviews",
   description: "Get feedback from 9 cybersecurity industry personas on your marketing content",
 };
 
@@ -24,11 +24,11 @@ export default function RootLayout({
               <div className="flex items-center justify-between">
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">Persona Roundtable</h1>
-                  <p className="text-sm text-gray-500">AI-Powered Marketing Copy Review</p>
+                  <p className="text-sm text-gray-500">AI-Powered Content Reviews</p>
                 </div>
             <nav className="flex space-x-4">
               <Link href="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                New Analysis
+                Roundtable
               </Link>
               <Link href="/discussion" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
                 Discussion
