@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 import {
@@ -58,6 +58,34 @@ function SessionDetailContent() {
   const [discussionDissents, setDiscussionDissents] = useState<any[] | null>(null);
   const [discussionLoading, setDiscussionLoading] = useState(false);
 
+  type ActivityItem = {
+    at: string;
+    message: string;
+    phase?: string;
+    session_id?: string;
+    persona_id?: string;
+    backend_provider?: string;
+    backend_model?: string;
+    candidate_id?: string;
+    meta?: any;
+  };
+
+  const [activityOpen, setActivityOpen] = useState(true);
+  const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
+
+  const appendActivity = useCallback((item: ActivityItem) => {
+    setActivityLog((prev) => {
+      const next = [...prev, item];
+      // Cap in-memory log so long sessions don't bloat the tab.
+      return next.length > 250 ? next.slice(next.length - 250) : next;
+    });
+  }, []);
+
+  useEffect(() => {
+    // Reset ephemeral UI state when navigating between sessions.
+    setActivityLog([]);
+  }, [sessionId]);
+
   // Load personas to get names
   const loadPersonas = useCallback(async () => {
     try {
@@ -84,6 +112,28 @@ function SessionDetailContent() {
     }
   }, [sessionId]);
 
+  // Throttle session reloads; websocket can be noisy.
+  const lastLoadAtRef = useRef(0);
+  const loadScheduledRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestSessionReload = useCallback(() => {
+    const minIntervalMs = 1000;
+    const now = Date.now();
+    const elapsed = now - lastLoadAtRef.current;
+
+    if (elapsed >= minIntervalMs) {
+      lastLoadAtRef.current = now;
+      loadSession();
+      return;
+    }
+
+    if (loadScheduledRef.current) return;
+    loadScheduledRef.current = setTimeout(() => {
+      loadScheduledRef.current = null;
+      lastLoadAtRef.current = Date.now();
+      loadSession();
+    }, Math.max(0, minIntervalMs - elapsed));
+  }, [loadSession]);
+
   // Start WebSocket connection for analysis
   const startAnalysis = useCallback((opts?: { autoStart?: boolean }) => {
     if (!sessionId || wsConnected) return;
@@ -93,10 +143,66 @@ function SessionDetailContent() {
       sessionId,
       (data) => {
         console.log('WebSocket message:', data);
-        // Avoid hammering the API for high-frequency chunk events.
-        if (data?.type !== 'chunk') {
-          loadSession();
+
+        const nowIso = new Date().toISOString();
+        const type = data?.type;
+
+        if (type === 'activity') {
+          appendActivity({
+            at: typeof data?.at === 'string' ? data.at : nowIso,
+            message: typeof data?.message === 'string' ? data.message : 'Activity',
+            phase: typeof data?.phase === 'string' ? data.phase : undefined,
+            session_id: typeof data?.session_id === 'string' ? data.session_id : undefined,
+            persona_id: typeof data?.persona_id === 'string' ? data.persona_id : undefined,
+            backend_provider: typeof data?.backend_provider === 'string' ? data.backend_provider : undefined,
+            backend_model: typeof data?.backend_model === 'string' ? data.backend_model : undefined,
+            candidate_id: typeof data?.candidate_id === 'string' ? data.candidate_id : undefined,
+            meta: data?.meta,
+          });
+          return;
         }
+
+        // Avoid hammering the API for high-frequency chunk events.
+        if (type === 'chunk') return;
+
+        if (type === 'error') {
+          appendActivity({
+            at: nowIso,
+            message: typeof data?.error === 'string' ? data.error : 'Analysis error',
+            phase: 'error',
+            session_id: typeof data?.session_id === 'string' ? data.session_id : undefined,
+            persona_id: typeof data?.persona_id === 'string' ? data.persona_id : undefined,
+          });
+        } else if (type === 'complete') {
+          appendActivity({
+            at: nowIso,
+            message: `Complete: ${typeof data?.persona_id === 'string' ? data.persona_id : 'unknown'}`,
+            phase: 'complete',
+            persona_id: typeof data?.persona_id === 'string' ? data.persona_id : undefined,
+          });
+        } else if (type === 'all_complete') {
+          appendActivity({
+            at: nowIso,
+            message: 'All complete',
+            phase: 'all_complete',
+            session_id: typeof data?.session_id === 'string' ? data.session_id : undefined,
+          });
+        } else if (type === 'status') {
+          // Keep status changes visible without needing to open devtools.
+          const who = typeof data?.persona_id === 'string'
+            ? `Persona ${data.persona_id}`
+            : (typeof data?.session_id === 'string' ? 'Session' : 'Status');
+          const status = typeof data?.status === 'string' ? data.status : 'unknown';
+          appendActivity({
+            at: nowIso,
+            message: `${who}: ${status}`,
+            phase: 'status',
+            session_id: typeof data?.session_id === 'string' ? data.session_id : undefined,
+            persona_id: typeof data?.persona_id === 'string' ? data.persona_id : undefined,
+          });
+        }
+
+        requestSessionReload();
       },
       (err) => {
         console.error('WebSocket error:', err);
@@ -106,15 +212,24 @@ function SessionDetailContent() {
 
     ws.connect();
 
-    return () => {
-      ws.close();
-    };
-  }, [sessionId, wsConnected, loadSession]);
+      return () => {
+        ws.close();
+      };
+  }, [sessionId, wsConnected, appendActivity, requestSessionReload]);
 
   useEffect(() => {
     loadPersonas();
     loadSession();
   }, [loadPersonas, loadSession]);
+
+  useEffect(() => {
+    return () => {
+      if (loadScheduledRef.current) {
+        clearTimeout(loadScheduledRef.current);
+        loadScheduledRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -198,12 +313,26 @@ function SessionDetailContent() {
   useEffect(() => {
     // Poll for updates if analyzing
     if (session?.status === 'analyzing') {
+      // With WS connected we should already be getting events; keep a slow poll as a safety net.
+      const intervalMs = wsConnected ? 15000 : 3000;
       const interval = setInterval(() => {
         loadSession();
-      }, 3000);
+      }, intervalMs);
       return () => clearInterval(interval);
     }
-  }, [session?.status, loadSession]);
+  }, [session?.status, wsConnected, loadSession]);
+
+  useEffect(() => {
+    // If user navigates directly to an in-progress session, connect to WS for live activity (no auto-start).
+    if (!sessionId || !session) return;
+    if (wsConnected) return;
+    if (session.status !== 'analyzing') return;
+
+    const cleanup = startAnalysis({ autoStart: false });
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [sessionId, session, wsConnected, startAnalysis]);
 
   const handleRetry = async (_personaId: string, _analysisId: number) => {
     if (session?.status === 'analyzing') {
@@ -371,6 +500,30 @@ function SessionDetailContent() {
     return persona?.role || '';
   };
 
+  const formatActivityMeta = (meta: any): string => {
+    if (!meta || typeof meta !== 'object') return '';
+    const parts: string[] = [];
+
+    if (typeof meta.duration_ms === 'number' && Number.isFinite(meta.duration_ms)) {
+      parts.push(`${Math.round(meta.duration_ms)}ms`);
+    }
+
+    const usage = meta.usage;
+    if (usage && typeof usage === 'object') {
+      if (typeof usage.input_tokens === 'number' && Number.isFinite(usage.input_tokens)) {
+        parts.push(`in ${Math.round(usage.input_tokens)}`);
+      }
+      if (typeof usage.output_tokens === 'number' && Number.isFinite(usage.output_tokens)) {
+        parts.push(`out ${Math.round(usage.output_tokens)}`);
+      }
+      if (typeof usage.cost_usd === 'number' && Number.isFinite(usage.cost_usd)) {
+        parts.push(`$${usage.cost_usd.toFixed(4)}`);
+      }
+    }
+
+    return parts.join(' · ');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -388,9 +541,9 @@ function SessionDetailContent() {
   }
 
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-8">
+      <div>
+        {/* Header */}
+        <div className="mb-8">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-3xl font-bold text-gray-900 mb-2">{session.file_name}</h2>
@@ -690,6 +843,75 @@ function SessionDetailContent() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Activity */}
+        <div className="mt-4 bg-white border rounded-lg overflow-hidden">
+          <button
+            type="button"
+            className="w-full px-4 py-3 flex items-start justify-between gap-4 hover:bg-gray-50"
+            onClick={() => setActivityOpen((v) => !v)}
+          >
+            <div className="text-left">
+              <div className="text-sm font-semibold text-gray-900">Activity</div>
+              <div className="text-xs text-gray-600 mt-0.5">
+                {activityLog.length > 0
+                  ? activityLog[activityLog.length - 1].message
+                  : (session.status === 'analyzing' ? 'Waiting for updates...' : 'No live activity yet')}
+              </div>
+            </div>
+            <div className="pt-0.5 text-gray-500">
+              {activityOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </div>
+          </button>
+
+          {activityOpen && (
+            <div className="border-t bg-white">
+              {activityLog.length === 0 ? (
+                <div className="p-4 text-sm text-gray-500">No activity events received yet.</div>
+              ) : (
+                <div className="max-h-64 overflow-auto">
+                  <ul className="divide-y">
+                    {activityLog.slice().reverse().map((a, idx) => {
+                      const meta = formatActivityMeta(a.meta);
+                      const backend = a.backend_provider && a.backend_model ? `${a.backend_provider}/${a.backend_model}` : '';
+                      let when = '';
+                      if (a.at) {
+                        const d = new Date(a.at);
+                        if (!Number.isNaN(d.getTime())) {
+                          when = format(d, 'h:mm:ss a');
+                        }
+                      }
+                      const who = a.persona_id && a.persona_id !== 'discussion'
+                        ? getPersonaName(a.persona_id)
+                        : (a.persona_id === 'discussion' ? 'Focus Group' : '');
+
+                      return (
+                        <li key={idx} className="px-4 py-3 text-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-gray-900">
+                                <span className="font-medium">{a.message}</span>
+                                {who && <span className="text-gray-500"> ({who})</span>}
+                              </div>
+                              {(backend || meta) && (
+                                <div className="text-xs text-gray-600 mt-1 font-mono break-all">
+                                  {backend && <span>{backend}</span>}
+                                  {backend && meta && <span>{' · '}</span>}
+                                  {meta && <span>{meta}</span>}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 whitespace-nowrap">{when}</div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

@@ -5,12 +5,20 @@ import { extractTextFromDocument } from '../lib/document-processor';
 import { validateAnalysisBackend } from '../lib/analysis-backend';
 
 interface AnalysisMessage {
-  type: 'chunk' | 'complete' | 'error' | 'all_complete';
+  type: 'chunk' | 'complete' | 'error' | 'all_complete' | 'status' | 'activity';
   persona_id?: string;
   text?: string;
   result?: any;
   error?: string;
   session_id?: string;
+  status?: string;
+  phase?: string;
+  message?: string;
+  at?: string;
+  backend_provider?: string;
+  backend_model?: string;
+  candidate_id?: string;
+  meta?: any;
 }
 
 type Backend = { provider: string; model: string };
@@ -51,6 +59,25 @@ type AnalysisJobState = {
 };
 
 const JOB_STORAGE_KEY = 'analysis_job_v1';
+
+type CLIBridgeUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+};
+
+type CLIBridgeCompletionMeta = {
+  provider?: string;
+  model?: string;
+  session_id?: string;
+  usage?: CLIBridgeUsage;
+  duration_ms?: number;
+};
+
+type CLIBridgeCompletion = {
+  text: string;
+  meta: CLIBridgeCompletionMeta | null;
+};
 
 export class SessionAnalyzer {
   private state: DurableObjectState;
@@ -234,6 +261,13 @@ export class SessionAnalyzer {
 
   private async jobExtractDocument(job: AnalysisJobState, db: D1Client, sendMessage: (msg: any) => void): Promise<void> {
     const sessionId = job.session_id;
+    sendMessage({
+      type: 'activity',
+      session_id: sessionId,
+      phase: 'extract_document',
+      message: 'Extracting text from document...',
+      at: new Date().toISOString(),
+    });
     const r2Key = (job.file_r2_key || '').trim();
     if (!r2Key) {
       const err = 'Missing document storage key';
@@ -288,6 +322,14 @@ export class SessionAnalyzer {
     job.document_excerpt = documentText.slice(0, 2000);
     job.updated_at = new Date().toISOString();
     await this.putJob(job);
+
+    sendMessage({
+      type: 'activity',
+      session_id: sessionId,
+      phase: 'extract_document_done',
+      message: `Document text extracted (${documentText.length.toLocaleString()} chars, sent ${documentForAnalysis.length.toLocaleString()} chars)`,
+      at: new Date().toISOString(),
+    });
   }
 
   private async jobAnalyzePersona(
@@ -316,6 +358,18 @@ export class SessionAnalyzer {
       }
       return;
     }
+
+    const idx = job.persona_ids.indexOf(personaId);
+    const position = idx >= 0 ? idx + 1 : 0;
+    const total = job.persona_ids.length;
+    sendMessage({
+      type: 'activity',
+      session_id: sessionId,
+      persona_id: persona.id,
+      phase: 'persona_start',
+      message: `${position > 0 && total > 0 ? `Persona ${position}/${total}: ` : ''}${persona.name} (${persona.role})`,
+      at: new Date().toISOString(),
+    });
 
     if (job.workflow === 'roundtable_council') {
       if (!job.council) throw new Error('Missing council workflow configuration');
@@ -388,7 +442,7 @@ export class SessionAnalyzer {
     fromPersonaId: string,
     targetPersonaId: string,
     db: D1Client,
-    _sendMessage: (msg: any) => void
+    sendMessage: (msg: any) => void
   ): Promise<void> {
     if (!job.discussion) throw new Error('Missing discussion workflow configuration');
 
@@ -444,7 +498,18 @@ export class SessionAnalyzer {
 
     const MAX_TARGET_JSON_CHARS = 6000;
     try {
-      const critiqueText = await this.clibridgeCompleteText({
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: fromPersonaId,
+        phase: 'discussion_critique_start',
+        backend_provider: job.discussion.variant_backend.provider,
+        backend_model: job.discussion.variant_backend.model,
+        message: `Focus group critique: ${fromPersona.name} -> ${targetPersona.name}`,
+        at: new Date().toISOString(),
+      });
+
+      const critiqueCompletion = await this.clibridgeComplete({
         provider: job.discussion.variant_backend.provider,
         model: job.discussion.variant_backend.model,
         systemPrompt: this.buildDiscussionCritiquePrompt(fromPersona),
@@ -457,13 +522,27 @@ export class SessionAnalyzer {
         }],
       });
 
-      const critiqueJson = JSON.parse(critiqueText);
+      const critiqueMeta = critiqueCompletion.meta;
+      const critiqueJson = JSON.parse(critiqueCompletion.text);
       const payload = {
         from_persona_id: fromPersonaId,
         target_persona_id: targetPersonaId,
+        meta: critiqueMeta || null,
         critique: critiqueJson,
       };
       await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: fromPersonaId,
+        phase: 'discussion_critique_done',
+        backend_provider: job.discussion.variant_backend.provider,
+        backend_model: job.discussion.variant_backend.model,
+        meta: critiqueMeta || null,
+        message: `Focus group critique done: ${fromPersona.name} -> ${targetPersona.name}`,
+        at: new Date().toISOString(),
+      });
     } catch (e) {
       const payload = {
         from_persona_id: fromPersonaId,
@@ -471,6 +550,17 @@ export class SessionAnalyzer {
         error: String(e),
       };
       await db.createAnalysisArtifact({ ...(artifactBase as any), content_json: JSON.stringify(payload) } as any);
+
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: fromPersonaId,
+        phase: 'discussion_critique_error',
+        backend_provider: job.discussion.variant_backend.provider,
+        backend_model: job.discussion.variant_backend.model,
+        message: `Focus group critique error: ${String(e)}`,
+        at: new Date().toISOString(),
+      });
     }
   }
 
@@ -560,8 +650,20 @@ export class SessionAnalyzer {
 
     const role = String(variants[0]?.role || 'Role').trim() || 'Role';
     let chairJson: any;
+    let chairMeta: CLIBridgeCompletionMeta | null = null;
     try {
-      const chairText = await this.clibridgeCompleteText({
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: 'discussion',
+        phase: 'discussion_chair_start',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        message: `Focus group chairman: ${job.discussion.chair_backend.provider}/${job.discussion.chair_backend.model}`,
+        at: new Date().toISOString(),
+      });
+
+      const chairCompletion = await this.clibridgeComplete({
         provider: job.discussion.chair_backend.provider,
         model: job.discussion.chair_backend.model,
         systemPrompt: this.buildDiscussionChairPrompt(role),
@@ -575,7 +677,20 @@ export class SessionAnalyzer {
           }),
         }],
       });
-      chairJson = JSON.parse(chairText);
+      chairMeta = chairCompletion.meta;
+      chairJson = JSON.parse(chairCompletion.text);
+
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: 'discussion',
+        phase: 'discussion_chair_done',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        meta: chairMeta || null,
+        message: 'Focus group chairman synthesis done',
+        at: new Date().toISOString(),
+      });
     } catch (e) {
       const err = String(e);
       console.error('Discussion chair synthesis failed:', err);
@@ -587,6 +702,17 @@ export class SessionAnalyzer {
         backend_model: job.discussion.chair_backend.model,
         content_json: JSON.stringify({ error: err }),
       } as any);
+
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: 'discussion',
+        phase: 'discussion_chair_error',
+        backend_provider: job.discussion.chair_backend.provider,
+        backend_model: job.discussion.chair_backend.model,
+        message: `Focus group chairman error: ${err}`,
+        at: new Date().toISOString(),
+      });
       return;
     }
 
@@ -612,7 +738,7 @@ export class SessionAnalyzer {
       artifact_type: 'discussion_chair_final',
       backend_provider: job.discussion.chair_backend.provider,
       backend_model: job.discussion.chair_backend.model,
-      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, final: normalizedFinal }),
+      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, meta: chairMeta || null, final: normalizedFinal }),
     } as any);
 
     await db.createAnalysisArtifact({
@@ -621,7 +747,7 @@ export class SessionAnalyzer {
       artifact_type: 'discussion_dissents',
       backend_provider: job.discussion.chair_backend.provider,
       backend_model: job.discussion.chair_backend.model,
-      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, dissents }),
+      content_json: JSON.stringify({ persona_group_id: job.discussion.persona_group_id || null, meta: chairMeta || null, dissents }),
     } as any);
 
     sendMessage({ type: 'complete', persona_id: 'discussion', result: { final: normalizedFinal, dissents } });
@@ -629,6 +755,13 @@ export class SessionAnalyzer {
 
   private async jobFinalize(job: AnalysisJobState, db: D1Client, sendMessage: (msg: any) => void): Promise<void> {
     const sessionId = job.session_id;
+    sendMessage({
+      type: 'activity',
+      session_id: sessionId,
+      phase: 'finalize',
+      message: 'Finalizing results...',
+      at: new Date().toISOString(),
+    });
     sendMessage({ type: 'all_complete', session_id: sessionId });
     await this.updateSessionFinalStatus(sessionId, db, sendMessage);
     await this.putJob(null);
@@ -921,7 +1054,7 @@ export class SessionAnalyzer {
     throw new Error('Failed to parse JSON result');
   }
 
-  private async clibridgeCompleteText(req: { provider: string; model: string; systemPrompt: string; messages: Array<{ role: string; content: string }> }): Promise<string> {
+  private async clibridgeComplete(req: { provider: string; model: string; systemPrompt: string; messages: Array<{ role: string; content: string }> }): Promise<CLIBridgeCompletion> {
     const clibridge = new CLIBridgeClient(this.env);
     const resp = await clibridge.completeAnalysis(req);
     if (!resp.ok) {
@@ -929,7 +1062,12 @@ export class SessionAnalyzer {
       throw new Error(`CLIBridge complete returned ${resp.status}: ${resp.statusText} - ${errorText.substring(0, 200)}`);
     }
     const raw = await resp.text();
-    return this.extractCompletionText(raw);
+    return this.extractCompletionPayload(raw);
+  }
+
+  private async clibridgeCompleteText(req: { provider: string; model: string; systemPrompt: string; messages: Array<{ role: string; content: string }> }): Promise<string> {
+    const { text } = await this.clibridgeComplete(req);
+    return text;
   }
 
   private buildCouncilReviewPrompt(persona: any): string {
@@ -1027,18 +1165,40 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
       const MAX_DOC_CHARS = 8000;
       const documentForAnalysis = documentText.length > MAX_DOC_CHARS ? documentText.slice(0, MAX_DOC_CHARS) : documentText;
 
-      const candidates: Array<{ candidate_id: string; backend: Backend; raw: string; parsed?: any; parse_error?: string }> = [];
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: persona.id,
+        phase: 'council_start',
+        message: `Council mode: collecting ${council.members.length} candidate(s)`,
+        at: new Date().toISOString(),
+      });
+
+      const candidates: Array<{ candidate_id: string; backend: Backend; raw: string; meta?: CLIBridgeCompletionMeta | null; parsed?: any; parse_error?: string }> = [];
       let idx = 0;
       for (const member of council.members) {
         idx += 1;
         const candidateId = `c${idx}`;
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_member_start',
+          candidate_id: candidateId,
+          backend_provider: member.provider,
+          backend_model: member.model,
+          message: `Council member ${candidateId}: ${member.provider}/${member.model}`,
+          at: new Date().toISOString(),
+        });
         try {
-          const raw = await this.clibridgeCompleteText({
+          const completion = await this.clibridgeComplete({
             provider: member.provider,
             model: member.model,
             systemPrompt,
             messages: [{ role: 'user', content: documentForAnalysis }],
           });
+          const raw = completion.text;
+          const meta = completion.meta;
 
           let parsed: any | undefined;
           let parseError: string | undefined;
@@ -1048,15 +1208,28 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             parseError = String(e);
           }
 
-          candidates.push({ candidate_id: candidateId, backend: member, raw, parsed, parse_error: parseError });
+          candidates.push({ candidate_id: candidateId, backend: member, raw, meta, parsed, parse_error: parseError });
           await db.createAnalysisArtifact({
             session_id: sessionId,
             persona_id: persona.id,
             artifact_type: 'council_member_output',
             backend_provider: member.provider,
             backend_model: member.model,
-            content_json: JSON.stringify({ candidate_id: candidateId, raw, parsed: parsed || null, parse_error: parseError || null }),
+            content_json: JSON.stringify({ candidate_id: candidateId, raw, meta: meta || null, parsed: parsed || null, parse_error: parseError || null }),
           } as any);
+
+          sendMessage({
+            type: 'activity',
+            session_id: sessionId,
+            persona_id: persona.id,
+            phase: parseError ? 'council_member_done_with_parse_error' : 'council_member_done',
+            candidate_id: candidateId,
+            backend_provider: member.provider,
+            backend_model: member.model,
+            meta: meta || null,
+            message: parseError ? `Council member ${candidateId} returned non-JSON` : `Council member ${candidateId} done`,
+            at: new Date().toISOString(),
+          });
         } catch (e) {
           const err = String(e);
           candidates.push({ candidate_id: candidateId, backend: member, raw: '', parse_error: err });
@@ -1068,6 +1241,18 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             backend_model: member.model,
             content_json: JSON.stringify({ candidate_id: candidateId, raw: null, parsed: null, parse_error: err }),
           } as any);
+
+          sendMessage({
+            type: 'activity',
+            session_id: sessionId,
+            persona_id: persona.id,
+            phase: 'council_member_error',
+            candidate_id: candidateId,
+            backend_provider: member.provider,
+            backend_model: member.model,
+            message: `Council member ${candidateId} error: ${err}`,
+            at: new Date().toISOString(),
+          });
         }
       }
 
@@ -1078,12 +1263,25 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
         // This preserves a usable user experience while still recording member outputs as artifacts.
         try {
           console.warn(`Council produced no usable JSON for ${persona.id}; falling back to chair direct analysis`);
-          const fallbackText = await this.clibridgeCompleteText({
+          sendMessage({
+            type: 'activity',
+            session_id: sessionId,
+            persona_id: persona.id,
+            phase: 'council_fallback_start',
+            backend_provider: council.chair.provider,
+            backend_model: council.chair.model,
+            message: 'Council fallback: running direct chair analysis',
+            at: new Date().toISOString(),
+          });
+
+          const fallbackCompletion = await this.clibridgeComplete({
             provider: council.chair.provider,
             model: council.chair.model,
             systemPrompt,
             messages: [{ role: 'user', content: documentForAnalysis }],
           });
+          const fallbackText = fallbackCompletion.text;
+          const fallbackMeta = fallbackCompletion.meta;
           const fallbackResult = await this.parseRoundtableResultFromText(fallbackText, persona);
 
           await db.createAnalysisArtifact({
@@ -1092,8 +1290,20 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             artifact_type: 'council_fallback_direct',
             backend_provider: council.chair.provider,
             backend_model: council.chair.model,
-            content_json: JSON.stringify({ raw: fallbackText, parsed: fallbackResult }),
+            content_json: JSON.stringify({ raw: fallbackText, meta: fallbackMeta || null, parsed: fallbackResult }),
           } as any);
+
+          sendMessage({
+            type: 'activity',
+            session_id: sessionId,
+            persona_id: persona.id,
+            phase: 'council_fallback_done',
+            backend_provider: council.chair.provider,
+            backend_model: council.chair.model,
+            meta: fallbackMeta || null,
+            message: 'Council fallback: direct chair analysis done',
+            at: new Date().toISOString(),
+          });
 
           sendMessage({ type: 'complete', persona_id: persona.id, result: fallbackResult });
 
@@ -1121,8 +1331,20 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
 
       // Reviewer step (best-effort)
       let reviewerJson: any = null;
+      let reviewerMeta: CLIBridgeCompletionMeta | null = null;
       try {
-        const reviewerText = await this.clibridgeCompleteText({
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_reviewer_start',
+          backend_provider: council.reviewer.provider,
+          backend_model: council.reviewer.model,
+          message: `Council reviewer: ${council.reviewer.provider}/${council.reviewer.model}`,
+          at: new Date().toISOString(),
+        });
+
+        const reviewerCompletion = await this.clibridgeComplete({
           provider: council.reviewer.provider,
           model: council.reviewer.model,
           systemPrompt: this.buildCouncilReviewPrompt(persona),
@@ -1134,9 +1356,32 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             }),
           }],
         });
-        reviewerJson = JSON.parse(reviewerText);
+        reviewerMeta = reviewerCompletion.meta;
+        reviewerJson = JSON.parse(reviewerCompletion.text);
+
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_reviewer_done',
+          backend_provider: council.reviewer.provider,
+          backend_model: council.reviewer.model,
+          meta: reviewerMeta || null,
+          message: 'Council reviewer done',
+          at: new Date().toISOString(),
+        });
       } catch (e) {
         reviewerJson = { error: String(e) };
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_reviewer_error',
+          backend_provider: council.reviewer.provider,
+          backend_model: council.reviewer.model,
+          message: `Council reviewer error: ${String(e)}`,
+          at: new Date().toISOString(),
+        });
       }
 
       await db.createAnalysisArtifact({
@@ -1145,13 +1390,25 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
         artifact_type: 'council_peer_review',
         backend_provider: council.reviewer.provider,
         backend_model: council.reviewer.model,
-        content_json: JSON.stringify(reviewerJson),
+        content_json: JSON.stringify({ meta: reviewerMeta || null, review: reviewerJson }),
       } as any);
 
       // Chair synthesis
       let finalResult: any;
+      let chairMeta: CLIBridgeCompletionMeta | null = null;
       try {
-        const chairText = await this.clibridgeCompleteText({
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_chair_start',
+          backend_provider: council.chair.provider,
+          backend_model: council.chair.model,
+          message: `Council chairman: ${council.chair.provider}/${council.chair.model}`,
+          at: new Date().toISOString(),
+        });
+
+        const chairCompletion = await this.clibridgeComplete({
           provider: council.chair.provider,
           model: council.chair.model,
           systemPrompt: this.buildCouncilChairPrompt(persona),
@@ -1164,10 +1421,33 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             }),
           }],
         });
-        finalResult = await this.parseRoundtableResultFromText(chairText, persona);
+        chairMeta = chairCompletion.meta;
+        finalResult = await this.parseRoundtableResultFromText(chairCompletion.text, persona);
+
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_chair_done',
+          backend_provider: council.chair.provider,
+          backend_model: council.chair.model,
+          meta: chairMeta || null,
+          message: 'Council chairman synthesis done',
+          at: new Date().toISOString(),
+        });
       } catch (e) {
         console.warn(`Council chair synthesis failed for ${persona.id}; falling back to top candidate.`, e);
         finalResult = usable[0].parsed;
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'council_chair_error_fallback',
+          backend_provider: council.chair.provider,
+          backend_model: council.chair.model,
+          message: `Council chairman failed; used best candidate instead (${String(e)})`,
+          at: new Date().toISOString(),
+        });
       }
 
       await db.createAnalysisArtifact({
@@ -1176,7 +1456,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
         artifact_type: 'council_chair_final',
         backend_provider: council.chair.provider,
         backend_model: council.chair.model,
-        content_json: JSON.stringify(finalResult),
+        content_json: JSON.stringify({ meta: chairMeta || null, result: finalResult }),
       } as any);
 
       sendMessage({ type: 'complete', persona_id: persona.id, result: finalResult });
@@ -1764,9 +2044,24 @@ Respond with ONLY valid JSON:
         ],
       };
 
+      const modelCallStartedAt = Date.now();
+      let firstChunkAt: number | null = null;
+      let completionMeta: CLIBridgeCompletionMeta | null = null;
+
       console.log(`Calling CLIBridge for persona ${persona.id}`);
       console.log(`Document text length: ${documentText.length} (sent: ${documentForAnalysis.length})`);
       console.log(`System prompt length: ${systemPrompt.length}`);
+
+      sendMessage({
+        type: 'activity',
+        session_id: sessionId,
+        persona_id: persona.id,
+        phase: 'clibridge_stream_start',
+        backend_provider: analysisBackend.provider,
+        backend_model: analysisBackend.model,
+        message: `Starting model stream: ${analysisBackend.provider}/${analysisBackend.model}`,
+        at: new Date().toISOString(),
+      });
 
       const response = await clibridge.streamAnalysis(analysisRequest);
       console.log(`CLIBridge streamAnalysis returned for persona ${persona.id}:`, { 
@@ -1854,6 +2149,19 @@ Respond with ONLY valid JSON:
               ? jsonData.text
               : (typeof jsonData.response === 'string' ? jsonData.response : '');
             if (chunkText) {
+              if (!firstChunkAt) {
+                firstChunkAt = Date.now();
+                sendMessage({
+                  type: 'activity',
+                  session_id: sessionId,
+                  persona_id: persona.id,
+                  phase: 'clibridge_first_chunk',
+                  backend_provider: analysisBackend.provider,
+                  backend_model: analysisBackend.model,
+                  message: `First token received (${firstChunkAt - modelCallStartedAt}ms)`,
+                  at: new Date().toISOString(),
+                });
+              }
               fullResponse += chunkText;
               sendMessage({
                 type: 'chunk',
@@ -1869,8 +2177,37 @@ Respond with ONLY valid JSON:
               ? jsonData.response
               : (typeof jsonData.text === 'string' ? jsonData.text : '');
             if (doneText) {
-              fullResponse += doneText;
+              // Some stream implementations include the entire final response in the done event.
+              // Avoid duplicating if chunk streaming already accumulated the prefix.
+              if (!fullResponse) {
+                fullResponse = doneText;
+              } else if (doneText.startsWith(fullResponse)) {
+                fullResponse = doneText;
+              } else if (!fullResponse.endsWith(doneText)) {
+                fullResponse += doneText;
+              }
             }
+
+            const meta: CLIBridgeCompletionMeta = {};
+            if (typeof jsonData.provider === 'string' && jsonData.provider.trim()) meta.provider = jsonData.provider;
+            if (typeof jsonData.model === 'string' && jsonData.model.trim()) meta.model = jsonData.model;
+            if (typeof jsonData.session_id === 'string' && jsonData.session_id.trim()) meta.session_id = jsonData.session_id;
+            if (jsonData.usage && typeof jsonData.usage === 'object') meta.usage = jsonData.usage as CLIBridgeUsage;
+            if (typeof jsonData.duration_ms === 'number' && Number.isFinite(jsonData.duration_ms)) meta.duration_ms = jsonData.duration_ms;
+            if (meta.duration_ms == null) meta.duration_ms = Date.now() - modelCallStartedAt;
+            completionMeta = Object.keys(meta).length > 0 ? meta : null;
+
+            sendMessage({
+              type: 'activity',
+              session_id: sessionId,
+              persona_id: persona.id,
+              phase: 'clibridge_stream_done',
+              backend_provider: analysisBackend.provider,
+              backend_model: analysisBackend.model,
+              meta: completionMeta || null,
+              message: 'Model stream complete',
+              at: new Date().toISOString(),
+            });
             receivedDoneEvent = true;
             return;
           }
@@ -1963,7 +2300,9 @@ Respond with ONLY valid JSON:
         }
         const text = await response.text();
         if (text) receivedAnyBytes = true;
-        fullResponse = text;
+        const payload = this.extractCompletionPayload(text);
+        fullResponse = payload.text;
+        completionMeta = payload.meta || null;
       }
 
       console.log(`CLIBridge response stats for persona ${persona.id}: chunks=${chunkCount}, sseEvents=${sseEventCount}, receivedAnyBytes=${receivedAnyBytes}, responseChars=${fullResponse.length}`);
@@ -1971,6 +2310,16 @@ Respond with ONLY valid JSON:
       // Fallback: if streaming produced nothing usable, try /v1/complete.
       if (streamTimedOut || fullResponse.trim().length === 0) {
         console.warn(`No usable streaming response from CLIBridge for persona ${persona.id}${streamTimedOut ? ' (stream timeout)' : ''}; falling back to complete endpoint`);
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'clibridge_complete_fallback_start',
+          backend_provider: analysisBackend.provider,
+          backend_model: analysisBackend.model,
+          message: 'Falling back to non-streaming completion',
+          at: new Date().toISOString(),
+        });
         const completeResponse = await clibridge.completeAnalysis(analysisRequest);
 
         if (!completeResponse.ok) {
@@ -1979,8 +2328,23 @@ Respond with ONLY valid JSON:
         }
 
         const completeRaw = await completeResponse.text();
-        fullResponse = this.extractCompletionText(completeRaw);
+        const payload = this.extractCompletionPayload(completeRaw);
+        fullResponse = payload.text;
+        completionMeta = payload.meta || completionMeta;
+        if (completionMeta && completionMeta.duration_ms == null) completionMeta.duration_ms = Date.now() - modelCallStartedAt;
         console.log(`CLIBridge complete fallback response length for persona ${persona.id}: ${fullResponse.length}`);
+
+        sendMessage({
+          type: 'activity',
+          session_id: sessionId,
+          persona_id: persona.id,
+          phase: 'clibridge_complete_fallback_done',
+          backend_provider: analysisBackend.provider,
+          backend_model: analysisBackend.model,
+          meta: completionMeta || null,
+          message: 'Non-streaming completion done',
+          at: new Date().toISOString(),
+        });
       }
 
       if (fullResponse.trim().length === 0) {
@@ -2152,14 +2516,18 @@ Respond with ONLY valid JSON (no markdown, no code blocks, no extra text). Use t
 }`;
   }
 
-  private extractCompletionText(raw: string): string {
-    const trimmed = raw.trim();
-    if (!trimmed) return '';
+  private extractCompletionPayload(raw: string): CLIBridgeCompletion {
+    const trimmed = (raw || '').trim();
+    if (!trimmed) return { text: '', meta: null };
 
-    // CLIBridge complete may return plain text or JSON-wrapped text. Handle both.
+    // CLIBridge complete typically returns JSON:
+    // { response, provider, model, session_id, usage, duration_ms }
     try {
       const parsed: any = JSON.parse(trimmed);
-      if (typeof parsed === 'string') return parsed;
+      if (typeof parsed === 'string') {
+        return { text: parsed, meta: null };
+      }
+
       if (parsed && typeof parsed === 'object') {
         const candidates = [
           parsed.response,
@@ -2169,15 +2537,33 @@ Respond with ONLY valid JSON (no markdown, no code blocks, no extra text). Use t
           parsed.message,
           parsed.output,
         ];
+
+        let text = '';
         for (const c of candidates) {
-          if (typeof c === 'string' && c.trim()) return c;
+          if (typeof c === 'string' && c.trim()) {
+            text = c;
+            break;
+          }
         }
+
+        const meta: CLIBridgeCompletionMeta = {};
+        if (typeof parsed.provider === 'string' && parsed.provider.trim()) meta.provider = parsed.provider;
+        if (typeof parsed.model === 'string' && parsed.model.trim()) meta.model = parsed.model;
+        if (typeof parsed.session_id === 'string' && parsed.session_id.trim()) meta.session_id = parsed.session_id;
+        if (parsed.usage && typeof parsed.usage === 'object') meta.usage = parsed.usage as CLIBridgeUsage;
+        if (typeof parsed.duration_ms === 'number' && Number.isFinite(parsed.duration_ms)) meta.duration_ms = parsed.duration_ms;
+
+        return { text: text || raw, meta: Object.keys(meta).length > 0 ? meta : null };
       }
     } catch (_e) {
       // Not JSON.
     }
 
-    return raw;
+    return { text: raw, meta: null };
+  }
+
+  private extractCompletionText(raw: string): string {
+    return this.extractCompletionPayload(raw).text;
   }
 
   private normalizeResult(result: any, persona: any): any {
