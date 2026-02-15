@@ -1,6 +1,8 @@
 .track {
   position: relative;
   height: 10px;
+  width: 170px;
+  max-width: 100%;
   border-radius: 9999px;
   overflow: hidden;
   background: rgba(17, 24, 39, 0.12);
@@ -40,4 +42,3 @@
     transform: translateX(82%);
   }
 }
-
