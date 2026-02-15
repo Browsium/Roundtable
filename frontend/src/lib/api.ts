@@ -22,6 +22,16 @@ async function fetchWithError(url: string, options?: RequestInit): Promise<any> 
   return response.json();
 }
 
+export type CLIBridgeProviderStatus = { name: string; available: boolean; version: string };
+export type CLIBridgeHealthResponse = { status: string; version?: string; uptime?: string; providers: CLIBridgeProviderStatus[] };
+
+export const clibridgeApi = {
+  health: async (baseUrl?: string): Promise<CLIBridgeHealthResponse> => {
+    const url = baseUrl || getApiUrl();
+    return fetchWithError(`${url}/clibridge/health`);
+  },
+};
+
 // Persona API
 export const personaApi = {
   getAll: async (): Promise<Persona[]> => {
@@ -314,6 +324,7 @@ export class AnalysisWebSocket {
 }
 
 export default {
+  clibridgeApi,
   personaApi,
   personaGroupApi,
   sessionApi,

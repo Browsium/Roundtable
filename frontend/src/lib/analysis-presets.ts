@@ -51,8 +51,8 @@ export const MODEL_PRESETS: ModelPreset[] = [
   { id: 'opencode-nemotron', label: 'OpenCode (Nemotron)', provider: 'opencode', model: 'nemotron' },
 
   // Other CLIBridge providers may be available depending on server configuration.
-  { id: 'codex', label: 'Codex (Coming soon)', provider: 'codex', model: 'default', disabled: true },
-  { id: 'gemini', label: 'Gemini (Coming soon)', provider: 'gemini', model: 'default', disabled: true },
+  { id: 'codex', label: 'Codex', provider: 'codex', model: 'default' },
+  { id: 'gemini', label: 'Gemini', provider: 'gemini', model: 'default' },
   { id: 'custom', label: 'Custom', provider: '', model: '' },
 ];
 

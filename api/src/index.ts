@@ -6,6 +6,7 @@ import { sessionRoutes } from './routes/sessions';
 import { r2Routes } from './routes/r2';
 import { settingsRoutes } from './routes/settings';
 import { personaGroupRoutes } from './routes/persona-groups';
+import { clibridgeRoutes } from './routes/clibridge';
 import { D1Client } from './lib/d1';
 import pkg from '../package.json';
 
@@ -57,6 +58,7 @@ app.route('/persona-groups', personaGroupRoutes);
 app.route('/sessions', sessionRoutes);
 app.route('/r2', r2Routes);
 app.route('/settings', settingsRoutes);
+app.route('/clibridge', clibridgeRoutes);
 
 // WebSocket upgrade endpoint
 app.get('/sessions/:id/analyze', async (c) => {

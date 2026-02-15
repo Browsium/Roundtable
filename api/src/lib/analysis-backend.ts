@@ -8,7 +8,7 @@ export type AnalysisBackend = {
 // Defaults align with the CLIBridge providers exposed in `docs/api.md`.
 // This is a policy allowlist (what Roundtable will accept), not a runtime
 // availability check (whether CLIBridge can actually run that provider).
-const DEFAULT_SUPPORTED_PROVIDERS = ['claude', 'opencode', 'codex'];
+const DEFAULT_SUPPORTED_PROVIDERS = ['claude', 'opencode', 'codex', 'gemini', 'aider'];
 
 const OPENCODE_MODEL_ALIASES = new Set([
   'kimi-2.5',

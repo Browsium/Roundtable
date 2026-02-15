@@ -150,6 +150,18 @@ export class D1Client {
     await ensureColumn('analysis_config_json');
   }
 
+  private async ensureErrorMessageColumn(table: 'sessions' | 'analyses'): Promise<void> {
+    const exists = await this.columnExists(table, 'error_message');
+    if (exists) return;
+    try {
+      await this.db.prepare(`ALTER TABLE ${table} ADD COLUMN error_message TEXT`).run();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.toLowerCase().includes('duplicate column')) return;
+      throw e;
+    }
+  }
+
   private async ensureSessionSharesSchema(): Promise<void> {
     // Idempotent; safe to call from request paths.
     await this.db.prepare(
@@ -406,11 +418,15 @@ export class D1Client {
     if (Object.prototype.hasOwnProperty.call(updates, 'workflow') || Object.prototype.hasOwnProperty.call(updates, 'analysis_config_json')) {
       await this.ensureSessionWorkflowColumns();
     }
-    
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'error_message')) {
+      await this.ensureErrorMessageColumn('sessions');
+    }
+     
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => (updates as any)[f]);
     values.push(now, id);
-    
+     
     await this.db.prepare(`UPDATE sessions SET ${setClause}, updated_at = ? WHERE id = ?`).bind(...values).run();
   }
 
@@ -428,6 +444,7 @@ export class D1Client {
   }
 
   async createAnalysis(analysis: Omit<Analysis, 'id'>): Promise<number> {
+    await this.ensureErrorMessageColumn('analyses');
     const result = await this.db.prepare(
       `INSERT INTO analyses (session_id, persona_id, status, score_json, top_issues_json, rewritten_suggestions_json, error_message, started_at, completed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -452,11 +469,15 @@ export class D1Client {
     if (Object.prototype.hasOwnProperty.call(updates, 'analysis_provider') || Object.prototype.hasOwnProperty.call(updates, 'analysis_model')) {
       await this.ensureAnalysisBackendColumns();
     }
-    
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'error_message')) {
+      await this.ensureErrorMessageColumn('analyses');
+    }
+     
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => (updates as any)[f]);
     values.push(id);
-    
+     
     await this.db.prepare(`UPDATE analyses SET ${setClause} WHERE id = ?`).bind(...values).run();
   }
 

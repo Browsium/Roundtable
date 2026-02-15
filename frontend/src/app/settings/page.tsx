@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, Check, AlertCircle, GitBranch, Server, Monitor } from 'lucide-react';
 import { FRONTEND_VERSION, BUILD_DATE } from '@/lib/version';
-import { settingsApi } from '@/lib/api';
+import { settingsApi, clibridgeApi } from '@/lib/api';
 import {
   DEFAULT_ANALYSIS_MODEL,
   DEFAULT_ANALYSIS_PROVIDER,
@@ -24,6 +24,7 @@ export default function SettingsPage() {
   const [storedValue, setStoredValue] = useState<string | null>(null);
   const [apiVersion, setApiVersion] = useState<ApiVersionInfo | null>(null);
   const [versionError, setVersionError] = useState<string | null>(null);
+  const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean> | null>(null);
 
   const [analysisProvider, setAnalysisProvider] = useState(DEFAULT_ANALYSIS_PROVIDER);
   const [analysisModel, setAnalysisModel] = useState(DEFAULT_ANALYSIS_MODEL);
@@ -42,6 +43,7 @@ export default function SettingsPage() {
     // Fetch API version
     fetchApiVersion(saved || defaultUrl);
     fetchApiSettings(saved || defaultUrl);
+    fetchClibridgeHealth(saved || defaultUrl);
   }, []);
 
   const fetchApiVersion = async (url: string) => {
@@ -56,6 +58,20 @@ export default function SettingsPage() {
       }
     } catch {
       setVersionError('Unable to connect to API');
+    }
+  };
+
+  const fetchClibridgeHealth = async (url: string) => {
+    try {
+      const data = await clibridgeApi.health(url);
+      const map: Record<string, boolean> = {};
+      for (const p of data.providers || []) {
+        map[String(p.name || '').toLowerCase()] = !!p.available;
+      }
+      setProviderAvailability(map);
+    } catch {
+      // Treat as unknown: don't disable any preset based on availability.
+      setProviderAvailability(null);
     }
   };
 
@@ -86,6 +102,7 @@ export default function SettingsPage() {
       // Refresh API version with new URL
       fetchApiVersion(apiUrl);
       fetchApiSettings(apiUrl);
+      fetchClibridgeHealth(apiUrl);
       
       setTimeout(() => setShowSavedMessage(false), 3000);
     } catch {
@@ -101,6 +118,7 @@ export default function SettingsPage() {
     setShowSavedMessage(true);
     fetchApiVersion(defaultUrl);
     fetchApiSettings(defaultUrl);
+    fetchClibridgeHealth(defaultUrl);
     setTimeout(() => setShowSavedMessage(false), 3000);
   };
 
@@ -135,6 +153,13 @@ export default function SettingsPage() {
     } finally {
       setAnalysisLoading(false);
     }
+  };
+
+  const isPresetUnavailable = (provider: string): boolean => {
+    const p = (provider || '').trim().toLowerCase();
+    if (!p) return false;
+    if (!providerAvailability) return false;
+    return providerAvailability[p] === false;
   };
 
   const formatBuildDate = (dateString: string) => {
@@ -298,7 +323,13 @@ export default function SettingsPage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {MODEL_PRESETS.map(p => (
-                <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
+                <option
+                  key={p.id}
+                  value={p.id}
+                  disabled={!!p.disabled || isPresetUnavailable(p.provider)}
+                >
+                  {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
+                </option>
               ))}
             </select>
             <p className="text-sm text-gray-500 mt-2">

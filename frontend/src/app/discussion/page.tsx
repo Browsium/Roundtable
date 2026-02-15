@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { AlertCircle, ArrowRight, FileText, Upload, Users } from 'lucide-react';
-import { personaApi, personaGroupApi, r2Api, sessionApi, settingsApi } from '@/lib/api';
+import { personaApi, personaGroupApi, r2Api, sessionApi, settingsApi, clibridgeApi } from '@/lib/api';
 import type { Persona } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import {
@@ -54,6 +54,7 @@ export default function DiscussionPage() {
   const [chairProvider, setChairProvider] = useState(DEFAULT_ANALYSIS_PROVIDER);
   const [chairModel, setChairModel] = useState(DEFAULT_ANALYSIS_MODEL);
   const [chairPreset, setChairPreset] = useState('claude-sonnet');
+  const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean> | null>(null);
 
   const loadPersonas = useCallback(async () => {
     try {
@@ -97,6 +98,28 @@ export default function DiscussionPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await clibridgeApi.health();
+        const map: Record<string, boolean> = {};
+        for (const p of data.providers || []) {
+          map[String(p.name || '').toLowerCase()] = !!p.available;
+        }
+        setProviderAvailability(map);
+      } catch {
+        setProviderAvailability(null);
+      }
+    })();
+  }, []);
+
+  const isPresetUnavailable = (provider: string): boolean => {
+    const p = (provider || '').trim().toLowerCase();
+    if (!p) return false;
+    if (!providerAvailability) return false;
+    return providerAvailability[p] === false;
+  };
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
@@ -405,7 +428,13 @@ export default function DiscussionPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white text-sm"
                 >
                   {MODEL_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
+                    <option
+                      key={p.id}
+                      value={p.id}
+                      disabled={!!p.disabled || isPresetUnavailable(p.provider)}
+                    >
+                      {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
+                    </option>
                   ))}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
@@ -442,7 +471,13 @@ export default function DiscussionPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white text-sm"
                 >
                   {MODEL_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
+                    <option
+                      key={p.id}
+                      value={p.id}
+                      disabled={!!p.disabled || isPresetUnavailable(p.provider)}
+                    >
+                      {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
+                    </option>
                   ))}
                 </select>
                 <div className="grid grid-cols-2 gap-2">
@@ -503,4 +538,3 @@ export default function DiscussionPage() {
     </div>
   );
 }
-

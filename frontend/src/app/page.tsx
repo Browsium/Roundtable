@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, FileText, Users, ArrowRight, Check, AlertCircle } from 'lucide-react';
-import { personaApi, sessionApi, r2Api, settingsApi } from '@/lib/api';
+import { personaApi, sessionApi, r2Api, settingsApi, clibridgeApi } from '@/lib/api';
 import type { Persona } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import {
@@ -26,6 +26,7 @@ export default function Home() {
   const [analysisPreset, setAnalysisPreset] = useState('claude-sonnet');
   const [useCouncil, setUseCouncil] = useState(true);
   const [councilMemberIds, setCouncilMemberIds] = useState<string[]>(['claude-sonnet']);
+  const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean> | null>(null);
 
   // Load personas on mount
   const loadPersonas = useCallback(async () => {
@@ -56,6 +57,35 @@ export default function Home() {
       }
     })();
   }, []);
+
+  // Provider availability (from CLIBridge /health via the API proxy).
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await clibridgeApi.health();
+        const map: Record<string, boolean> = {};
+        for (const p of data.providers || []) {
+          map[String(p.name || '').toLowerCase()] = !!p.available;
+        }
+        setProviderAvailability(map);
+      } catch {
+        setProviderAvailability(null);
+      }
+    })();
+  }, []);
+
+  const isPresetUnavailable = (provider: string): boolean => {
+    const p = (provider || '').trim().toLowerCase();
+    if (!p) return false;
+    if (!providerAvailability) return false;
+    return providerAvailability[p] === false;
+  };
+
+  const isPresetDisabled = (preset: (typeof MODEL_PRESETS)[number] | undefined | null): boolean => {
+    if (!preset) return true;
+    if (preset.disabled) return true;
+    return isPresetUnavailable(preset.provider);
+  };
 
   // File upload handling
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -143,13 +173,13 @@ export default function Home() {
 
       let workflow: string | undefined = undefined;
       let analysisConfig: any | undefined = undefined;
-      if (useCouncil) {
-        workflow = 'roundtable_council';
+        if (useCouncil) {
+          workflow = 'roundtable_council';
 
-        const members = councilMemberIds
-          .map((pid) => MODEL_PRESETS.find((p) => p.id === pid))
-          .filter((p) => !!p && !p!.disabled && p!.id !== 'custom')
-          .map((p) => ({ provider: p!.provider, model: p!.model }));
+          const members = councilMemberIds
+            .map((pid) => MODEL_PRESETS.find((p) => p.id === pid))
+            .filter((p) => !!p && !isPresetDisabled(p) && p!.id !== 'custom')
+            .map((p) => ({ provider: p!.provider, model: p!.model }));
 
         if (members.length === 0) {
           setError('Select at least one council member model');
@@ -288,17 +318,23 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-sm text-gray-600">Preset</label>
-                <select
-                  value={analysisPreset}
-                  onChange={(e) => handlePresetChange(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {MODEL_PRESETS.map(p => (
-                    <option key={p.id} value={p.id} disabled={p.disabled}>{p.label}</option>
-                  ))}
-                </select>
+                  <select
+                    value={analysisPreset}
+                    onChange={(e) => handlePresetChange(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {MODEL_PRESETS.map(p => (
+                      <option
+                        key={p.id}
+                        value={p.id}
+                        disabled={!!p.disabled || isPresetUnavailable(p.provider)}
+                      >
+                        {isPresetUnavailable(p.provider) ? `${p.label} (Unavailable)` : p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
 
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -351,7 +387,7 @@ export default function Home() {
                 <div className="mt-3">
                   <p className="text-sm font-medium text-gray-700 mb-2">Council members</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {MODEL_PRESETS.filter(p => !p.disabled && p.id !== 'custom').map((p) => (
+                    {MODEL_PRESETS.filter(p => !isPresetDisabled(p) && p.id !== 'custom').map((p) => (
                       <label
                         key={p.id}
                         className="inline-flex items-center gap-2 px-3 py-2 border rounded-md bg-white text-sm cursor-pointer hover:bg-gray-50"

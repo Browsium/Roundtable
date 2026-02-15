@@ -20,6 +20,19 @@ export interface SkillUploadRequest {
   template: string;
 }
 
+export interface CLIBridgeProviderStatus {
+  name: string;
+  available: boolean;
+  version: string;
+}
+
+export interface CLIBridgeHealthResponse {
+  status: string;
+  version?: string;
+  uptime?: string;
+  providers: CLIBridgeProviderStatus[];
+}
+
 export class CLIBridgeClient {
   private config: CLIBridgeConfig;
 
@@ -48,6 +61,19 @@ export class CLIBridgeClient {
       system_prompt: request.systemPrompt,
       messages: request.messages,
     });
+  }
+
+  async health(): Promise<CLIBridgeHealthResponse> {
+    const url = `${this.config.url}/health`;
+    const headers = this.getHeaders();
+    delete headers['Content-Type'];
+
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`CLIBridge health failed: ${response.status} ${response.statusText} - ${error.substring(0, 500)}`);
+    }
+    return response.json() as Promise<CLIBridgeHealthResponse>;
   }
 
   async streamAnalysis(request: StreamRequest): Promise<Response> {
