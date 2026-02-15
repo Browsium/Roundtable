@@ -2,7 +2,7 @@
 
 **Date**: 2026-02-14  
 **Repo**: `C:\Users\Matt\Documents\Projects\Roundtable`  
-**App Version**: `1.2.0` (frontend + api + `roundtable-mcp`)  
+**App Version**: `1.2.1` (frontend + api + `roundtable-mcp`)  
 **Status**: Web app is live; analysis, sharing, and export are implemented; local STDIO MCP workflow exists. Remaining work is mostly auth hardening and integrations.
 
 ## What Roundtable Does

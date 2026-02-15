@@ -1,6 +1,6 @@
 {
   "name": "roundtable-api",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Roundtable API - Cloudflare Workers backend for CLIBridge integration",
   "main": "src/index.ts",
   "scripts": {
