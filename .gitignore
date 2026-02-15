@@ -32,6 +32,7 @@ frontend/out/
 frontend/build/
 frontend/dist/
 frontend/next-env.d.ts
+frontend/.build-meta.json
 
 # MCP
 mcp/**/.cache/

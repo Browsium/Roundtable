@@ -3,6 +3,7 @@ import { D1Client } from '../lib/d1';
 import { CLIBridgeClient } from '../lib/clibridge';
 import { extractTextFromDocument } from '../lib/document-processor';
 import { validateAnalysisBackend } from '../lib/analysis-backend';
+import JSON5 from 'json5';
 
 interface AnalysisMessage {
   type: 'chunk' | 'complete' | 'error' | 'all_complete' | 'status' | 'activity';
@@ -523,7 +524,7 @@ export class SessionAnalyzer {
       });
 
       const critiqueMeta = critiqueCompletion.meta;
-      const critiqueJson = JSON.parse(critiqueCompletion.text);
+      const critiqueJson = this.parseJsonFlexible(critiqueCompletion.text);
       const payload = {
         from_persona_id: fromPersonaId,
         target_persona_id: targetPersonaId,
@@ -641,7 +642,7 @@ export class SessionAnalyzer {
       }
       if (typeof raw === 'string') {
         try {
-          critiques.push(JSON.parse(raw));
+          critiques.push(this.parseJsonFlexible(raw));
         } catch {
           critiques.push(raw);
         }
@@ -678,7 +679,7 @@ export class SessionAnalyzer {
         }],
       });
       chairMeta = chairCompletion.meta;
-      chairJson = JSON.parse(chairCompletion.text);
+      chairJson = this.parseJsonFlexible(chairCompletion.text);
 
       sendMessage({
         type: 'activity',
@@ -1020,38 +1021,115 @@ export class SessionAnalyzer {
     });
   }
 
-  private async parseRoundtableResultFromText(fullResponse: string, persona: any): Promise<any> {
-    const trimmed = (fullResponse || '').trim();
-    if (!trimmed) {
-      throw new Error('Empty response');
-    }
+  private extractFirstJsonValue(text: string): string | null {
+    const s = (text || '').trim();
+    const start = s.search(/[\[{]/);
+    if (start === -1) return null;
 
-    // Try to extract JSON from the response
-    const jsonMatch = trimmed.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/);
-    if (jsonMatch) {
-      try {
-        const result = JSON.parse(jsonMatch[1]);
-        return this.normalizeResult(result, persona);
-      } catch {
-        // fallthrough
+    const stack: string[] = [];
+    let inString = false;
+    let quote = '';
+    let escape = false;
+
+    for (let i = start; i < s.length; i++) {
+      const ch = s[i];
+
+      if (inString) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === '\\\\') {
+          escape = true;
+          continue;
+        }
+        if (ch === quote) {
+          inString = false;
+          quote = '';
+        }
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+
+      if (ch === '{' || ch === '[') {
+        stack.push(ch);
+        continue;
+      }
+
+      if (ch === '}' || ch === ']') {
+        const open = stack[stack.length - 1];
+        const matches = (open === '{' && ch === '}') || (open === '[' && ch === ']');
+        if (!matches) continue;
+        stack.pop();
+        if (stack.length === 0) {
+          return s.slice(start, i + 1);
+        }
       }
     }
 
-    try {
-      const result = JSON.parse(trimmed);
-      return this.normalizeResult(result, persona);
-    } catch {
-      // Best-effort: extract a JSON object from surrounding text.
-      const firstBrace = trimmed.indexOf('{');
-      const lastBrace = trimmed.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        const maybeJson = trimmed.slice(firstBrace, lastBrace + 1);
-        const result = JSON.parse(maybeJson);
-        return this.normalizeResult(result, persona);
+    return null;
+  }
+
+  private parseJsonFlexible(text: string): any {
+    const trimmed = (text || '').trim();
+    if (!trimmed) throw new Error('Empty response');
+
+    const candidates: string[] = [];
+
+    // 1) Any fenced blocks (many models ignore "no markdown" instructions).
+    const fenceRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+    let m: RegExpExecArray | null;
+    while ((m = fenceRegex.exec(trimmed)) !== null) {
+      const inner = (m[1] || '').trim();
+      if (inner) candidates.push(inner);
+    }
+
+    // 2) First balanced JSON value in the response (handles leading/trailing commentary).
+    const extracted = this.extractFirstJsonValue(trimmed);
+    if (extracted) candidates.unshift(extracted);
+
+    // 3) Full response last.
+    candidates.push(trimmed);
+
+    for (const c of candidates) {
+      try {
+        return JSON.parse(c);
+      } catch {
+        // continue
+      }
+      try {
+        return JSON5.parse(c);
+      } catch {
+        // continue
       }
     }
 
     throw new Error('Failed to parse JSON result');
+  }
+
+  private fallbackResultFromText(text: string, persona: any): any {
+    return this.normalizeResult(
+      {
+        persona_role: persona?.role || 'Unknown Persona',
+        overall_score: 0,
+        dimension_scores: {},
+        top_3_issues: [],
+        what_works_well: [],
+        overall_verdict: text || 'No response received',
+        rewritten_headline_suggestion: '',
+      },
+      persona
+    );
+  }
+
+  private async parseRoundtableResultFromText(fullResponse: string, persona: any): Promise<any> {
+    const result = this.parseJsonFlexible(fullResponse);
+    return this.normalizeResult(result, persona);
   }
 
   private async clibridgeComplete(req: { provider: string; model: string; systemPrompt: string; messages: Array<{ role: string; content: string }> }): Promise<CLIBridgeCompletion> {
@@ -1206,6 +1284,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             parsed = await this.parseRoundtableResultFromText(raw, persona);
           } catch (e) {
             parseError = String(e);
+            parsed = this.fallbackResultFromText(raw, persona);
           }
 
           candidates.push({ candidate_id: candidateId, backend: member, raw, meta, parsed, parse_error: parseError });
@@ -1256,7 +1335,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
         }
       }
 
-      const usable = candidates.filter((c) => c.parsed && typeof c.parsed === 'object');
+      const usable = candidates.filter((c) => c.parsed && typeof c.parsed === 'object' && !c.parse_error);
       if (usable.length === 0) {
         // Council members sometimes ignore JSON-only instructions (or return invalid JSON). Rather than
         // failing the persona outright, fall back to running a single direct analysis using the chair backend.
@@ -1282,7 +1361,15 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
           });
           const fallbackText = fallbackCompletion.text;
           const fallbackMeta = fallbackCompletion.meta;
-          const fallbackResult = await this.parseRoundtableResultFromText(fallbackText, persona);
+
+          let fallbackResult: any;
+          let fallbackParseError: string | null = null;
+          try {
+            fallbackResult = await this.parseRoundtableResultFromText(fallbackText, persona);
+          } catch (e) {
+            fallbackParseError = String(e);
+            fallbackResult = this.fallbackResultFromText(fallbackText, persona);
+          }
 
           await db.createAnalysisArtifact({
             session_id: sessionId,
@@ -1290,18 +1377,18 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             artifact_type: 'council_fallback_direct',
             backend_provider: council.chair.provider,
             backend_model: council.chair.model,
-            content_json: JSON.stringify({ raw: fallbackText, meta: fallbackMeta || null, parsed: fallbackResult }),
+            content_json: JSON.stringify({ raw: fallbackText, meta: fallbackMeta || null, parsed: fallbackResult, parse_error: fallbackParseError }),
           } as any);
 
           sendMessage({
             type: 'activity',
             session_id: sessionId,
             persona_id: persona.id,
-            phase: 'council_fallback_done',
+            phase: fallbackParseError ? 'council_fallback_done_with_parse_error' : 'council_fallback_done',
             backend_provider: council.chair.provider,
             backend_model: council.chair.model,
             meta: fallbackMeta || null,
-            message: 'Council fallback: direct chair analysis done',
+            message: fallbackParseError ? 'Council fallback: chair returned non-JSON (stored as verdict)' : 'Council fallback: direct chair analysis done',
             at: new Date().toISOString(),
           });
 
@@ -1311,7 +1398,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             status: 'completed',
             analysis_provider: council.chair.provider,
             analysis_model: council.chair.model,
-            error_message: null as any,
+            error_message: (fallbackParseError ? `Non-JSON chair fallback output: ${fallbackParseError}` : null) as any,
             score_json: JSON.stringify(fallbackResult.dimension_scores || {}),
             top_issues_json: JSON.stringify(fallbackResult.top_3_issues || []),
             rewritten_suggestions_json: JSON.stringify({
@@ -1357,7 +1444,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
           }],
         });
         reviewerMeta = reviewerCompletion.meta;
-        reviewerJson = JSON.parse(reviewerCompletion.text);
+        reviewerJson = this.parseJsonFlexible(reviewerCompletion.text);
 
         sendMessage({
           type: 'activity',
@@ -1609,7 +1696,7 @@ Respond with ONLY valid JSON:
             }],
           });
 
-          const critiqueJson = JSON.parse(critiqueText);
+          const critiqueJson = this.parseJsonFlexible(critiqueText);
           const payload = {
             from_persona_id: from.id,
             target_persona_id: target.id,
@@ -1661,7 +1748,7 @@ Respond with ONLY valid JSON:
           }),
         }],
       });
-      chairJson = JSON.parse(chairText);
+      chairJson = this.parseJsonFlexible(chairText);
     } catch (e) {
       const err = String(e);
       console.error('Discussion chair synthesis failed:', err);
@@ -2353,47 +2440,17 @@ Respond with ONLY valid JSON:
 
       // Parse final result
       console.log(`Parsing result for persona ${persona.id}, response length: ${fullResponse.length}`);
-      let result;
+      let result: any;
+      let parseError: string | null = null;
       try {
-        // Try to extract JSON from the response
-        const jsonMatch = fullResponse.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```/);
-        if (jsonMatch) {
-          result = JSON.parse(jsonMatch[1]);
-          console.log(`Parsed JSON result for persona ${persona.id}`);
-        } else {
-          const trimmed = fullResponse.trim();
-          try {
-            result = JSON.parse(trimmed);
-            console.log(`Parsed direct JSON result for persona ${persona.id}`);
-          } catch (_directParseError) {
-            // Best-effort: extract a JSON object from surrounding text.
-            const firstBrace = trimmed.indexOf('{');
-            const lastBrace = trimmed.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-              const maybeJson = trimmed.slice(firstBrace, lastBrace + 1);
-              result = JSON.parse(maybeJson);
-              console.log(`Parsed extracted JSON object for persona ${persona.id}`);
-            } else {
-              throw _directParseError;
-            }
-          }
-        }
-      } catch (parseError) {
+        result = await this.parseRoundtableResultFromText(fullResponse, persona);
+      } catch (e) {
         // If parsing fails, treat the whole response as the verdict
+        parseError = String(e);
         console.error(`Failed to parse JSON for persona ${persona.id}:`, parseError);
         console.log(`Full response was: ${fullResponse.substring(0, 500)}...`);
-        result = {
-          persona_role: persona.role,
-          overall_score: 0,
-          dimension_scores: {},
-          top_3_issues: [],
-          what_works_well: [],
-          overall_verdict: fullResponse || 'No response received',
-          rewritten_headline_suggestion: '',
-        };
+        result = this.fallbackResultFromText(fullResponse, persona);
       }
-
-      result = this.normalizeResult(result, persona);
 
       // Only send complete message if we have a valid result
       if (result) {
@@ -2410,7 +2467,7 @@ Respond with ONLY valid JSON:
           console.log(`Saving analysis to D1 for persona ${persona.id}`);
           await db.updateAnalysis(analysis.id, {
             status: 'completed',
-            error_message: null as any,
+            error_message: (parseError ? `Non-JSON model output: ${parseError}` : null) as any,
             score_json: JSON.stringify(result.dimension_scores || {}),
             top_issues_json: JSON.stringify(result.top_3_issues || []),
             rewritten_suggestions_json: JSON.stringify({
