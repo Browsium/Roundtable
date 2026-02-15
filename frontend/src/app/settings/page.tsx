@@ -139,7 +139,11 @@ export default function SettingsPage() {
 
   const formatBuildDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleString();
+      if (!dateString) return 'unknown';
+      const d = new Date(dateString);
+      if (Number.isNaN(d.getTime()) || d.getTime() <= 0) return 'unknown';
+      // Use a deterministic format so static prerender and client hydration match.
+      return d.toISOString();
     } catch {
       return dateString;
     }
