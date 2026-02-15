@@ -9,7 +9,7 @@ Copy/paste this into a new Claude Code/Codex session.
 You are continuing work on the Roundtable repo:
 
 - Repo path: `C:\Users\Matt\Documents\Projects\Roundtable`
-- Current app version: `1.2.1`
+- Current app version: `1.2.2`
 - Stack:
   - `frontend/`: Next.js static export (Cloudflare Pages)
   - `api/`: Cloudflare Worker + Durable Object `SessionAnalyzer` + D1 + R2
