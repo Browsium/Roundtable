@@ -11,7 +11,8 @@ This package exposes Roundtable as an MCP server over:
 - `roundtable.create_persona`
 - `roundtable.update_persona`
 - `roundtable.deploy_persona`
-- `roundtable.focus_group`
+- `roundtable.focus_group` (standard or council workflow)
+- `roundtable.focus_group_discussion` (single-role variants discussion)
 - `roundtable.get_session`
 - `roundtable.export_session` (pdf/docx/csv/md; in HTTP mode returns an MCP resource by default)
 

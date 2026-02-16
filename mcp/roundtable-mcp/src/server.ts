@@ -268,6 +268,12 @@ async function focusGroup(
   const { filename, bytes, contentType } = await readInputBytes(args, mode);
   const fileExtension = extFromFilename(filename);
 
+  const workflowRaw = typeof args.workflow === 'string' ? args.workflow.trim().toLowerCase() : '';
+  const workflow = workflowRaw || 'roundtable_standard';
+  if (workflow !== 'roundtable_standard' && workflow !== 'roundtable_council') {
+    throw new Error(`Invalid workflow '${workflowRaw}'. Allowed: roundtable_standard, roundtable_council`);
+  }
+
   const panel = (typeof args.panel === 'string' ? args.panel.trim().toLowerCase() : '') || 'full';
   const requestedPersonaIds = asStringArray(args.persona_ids);
 
@@ -303,6 +309,54 @@ async function focusGroup(
   if (analysisProvider && analysisModel) {
     createSessionBody.analysis_provider = analysisProvider;
     createSessionBody.analysis_model = analysisModel;
+  }
+
+  if (workflow === 'roundtable_council') {
+    const rawMembers = Array.isArray(args.council_members) ? args.council_members : [];
+    const members: Array<{ provider: string; model: string }> = [];
+    for (const m of rawMembers) {
+      if (!m || typeof m !== 'object') continue;
+      const provider = typeof (m as any).provider === 'string' ? String((m as any).provider).trim() : '';
+      const model = typeof (m as any).model === 'string' ? String((m as any).model).trim() : '';
+      if (!provider || !model) continue;
+      members.push({ provider, model });
+    }
+
+    if (members.length === 0) {
+      if (analysisProvider && analysisModel) {
+        members.push({ provider: analysisProvider, model: analysisModel });
+      } else {
+        throw new Error('council_members is required when workflow=roundtable_council (or provide analysis_provider+analysis_model to use as a single council member).');
+      }
+    }
+
+    const chairBackendArg = args.council_chair_backend;
+    const reviewerBackendArg = args.council_reviewer_backend;
+    const chairBackend = (chairBackendArg && typeof chairBackendArg === 'object')
+      ? {
+        provider: typeof (chairBackendArg as any).provider === 'string' ? String((chairBackendArg as any).provider).trim() : '',
+        model: typeof (chairBackendArg as any).model === 'string' ? String((chairBackendArg as any).model).trim() : '',
+      }
+      : (analysisProvider && analysisModel ? { provider: analysisProvider, model: analysisModel } : null);
+
+    const reviewerBackend = (reviewerBackendArg && typeof reviewerBackendArg === 'object')
+      ? {
+        provider: typeof (reviewerBackendArg as any).provider === 'string' ? String((reviewerBackendArg as any).provider).trim() : '',
+        model: typeof (reviewerBackendArg as any).model === 'string' ? String((reviewerBackendArg as any).model).trim() : '',
+      }
+      : (chairBackend ? { ...chairBackend } : null);
+
+    createSessionBody.workflow = 'roundtable_council';
+    createSessionBody.analysis_config_json = {
+      council: {
+        members,
+        ...(reviewerBackend && reviewerBackend.provider && reviewerBackend.model ? { reviewer_backend: reviewerBackend } : {}),
+        ...(chairBackend && chairBackend.provider && chairBackend.model ? { chair_backend: chairBackend } : {}),
+      },
+    };
+  } else if (workflow === 'roundtable_standard') {
+    // Explicit workflow is optional, but useful for callers that want to be clear.
+    createSessionBody.workflow = 'roundtable_standard';
   }
 
   const session = await fetchJson<any>(apiUrl, '/sessions', {
@@ -664,7 +718,7 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
         },
         {
           name: 'roundtable.focus_group',
-          description: 'Submit a document to Roundtable and optionally wait for the focus-group analysis to complete.',
+          description: 'Submit a document to Roundtable and optionally wait for analysis to complete. Supports standard and council workflows.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -677,6 +731,37 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
               panel: { type: 'string', enum: ['fast', 'full'], description: 'Preset persona selection used when persona_ids is omitted.' },
               analysis_provider: { type: 'string', description: 'Override provider for this session (requires analysis_model).' },
               analysis_model: { type: 'string', description: 'Override model for this session (requires analysis_provider).' },
+              workflow: { type: 'string', enum: ['roundtable_standard', 'roundtable_council'], description: 'Workflow path (default: roundtable_standard).' },
+              council_members: {
+                type: 'array',
+                description: 'Council member backends (required when workflow=roundtable_council unless analysis_provider+analysis_model are provided).',
+                items: {
+                  type: 'object',
+                  properties: {
+                    provider: { type: 'string' },
+                    model: { type: 'string' },
+                  },
+                  required: ['provider', 'model'],
+                },
+              },
+              council_chair_backend: {
+                type: 'object',
+                description: 'Optional chairman backend override. Defaults to analysis_provider+analysis_model if provided, else server defaults.',
+                properties: {
+                  provider: { type: 'string' },
+                  model: { type: 'string' },
+                },
+                required: ['provider', 'model'],
+              },
+              council_reviewer_backend: {
+                type: 'object',
+                description: 'Optional reviewer backend override. Defaults to chairman.',
+                properties: {
+                  provider: { type: 'string' },
+                  model: { type: 'string' },
+                },
+                required: ['provider', 'model'],
+              },
               wait: { type: 'boolean', description: 'If true, wait for completion and return results (default: true).' },
               timeout_seconds: { type: 'number', description: 'Max seconds to wait when wait=true (default: 900).' },
               poll_interval_seconds: { type: 'number', description: 'Polling interval in seconds (default: 2).' },
