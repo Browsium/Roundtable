@@ -45,6 +45,8 @@ type AnalysisJobState = {
   document_excerpt: string;
   // Optional evaluation prompt that scopes how personas evaluate the document.
   evaluation_prompt: string;
+  // Optional structured metadata about the document (type, scope, audience).
+  document_metadata: string;
   // Standard workflow.
   roundtable_backend?: Backend;
   // Council workflow.
@@ -380,21 +382,22 @@ export class SessionAnalyzer {
     });
 
     const evalPrompt = job.evaluation_prompt || undefined;
+    const docMeta = job.document_metadata || undefined;
 
     if (job.workflow === 'roundtable_council') {
       if (!job.council) throw new Error('Missing council workflow configuration');
-      await this.analyzePersonaCouncil(sessionId, persona, job.document_text, sendMessage, db, job.council, evalPrompt);
+      await this.analyzePersonaCouncil(sessionId, persona, job.document_text, sendMessage, db, job.council, evalPrompt, docMeta);
       return;
     }
 
     if (job.workflow === 'role_variant_discussion') {
       if (!job.discussion) throw new Error('Missing discussion workflow configuration');
-      await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.discussion.variant_backend, evalPrompt);
+      await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.discussion.variant_backend, evalPrompt, docMeta);
       return;
     }
 
     if (!job.roundtable_backend) throw new Error('Missing roundtable backend configuration');
-    await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.roundtable_backend, evalPrompt);
+    await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.roundtable_backend, evalPrompt, docMeta);
   }
 
   private async jobDiscussionGenerateTasks(job: AnalysisJobState, db: D1Client, _sendMessage: (msg: any) => void): Promise<void> {
@@ -1013,6 +1016,7 @@ export class SessionAnalyzer {
         document_text: '',
         document_excerpt: '',
         evaluation_prompt: ((session as any).evaluation_prompt || '').trim(),
+        document_metadata: ((session as any).document_metadata || '').trim(),
         ...(workflow === 'roundtable_council'
           ? { council: councilCfg || { members: [validatedBackend], reviewer: validatedBackend, chair: validatedBackend } }
           : {}),
@@ -1223,7 +1227,8 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
     sendMessage: (msg: any) => void,
     db: D1Client,
     council: { members: Backend[]; reviewer: Backend; chair: Backend },
-    evaluationPrompt?: string
+    evaluationPrompt?: string,
+    documentMetadata?: string
   ): Promise<void> {
     console.log(`Starting analyzePersonaCouncil for ${persona.id} in session ${sessionId}`);
 
@@ -1249,7 +1254,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
 
       sendMessage({ type: 'status', persona_id: persona.id, status: 'running' });
 
-      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt);
+      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt, documentMetadata);
 
       // Document text is already bounded at extraction time (400K chars).
       // No further truncation — pass the full document so all content is evaluated.
@@ -2001,14 +2006,15 @@ Respond with ONLY valid JSON:
       }
 
       const evalPrompt = ((session as any).evaluation_prompt || '').trim() || undefined;
+      const docMeta = ((session as any).document_metadata || '').trim() || undefined;
 
       if (councilCfg) {
-        await this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, councilCfg, evalPrompt);
+        await this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, councilCfg, evalPrompt, docMeta);
         await this.updateSessionFinalStatus(sessionId, db, sendMessage);
         return;
       }
 
-      await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend, evalPrompt);
+      await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend, evalPrompt, docMeta);
 
       // If this session is a discussion workflow, re-run chair synthesis to update the final.
       if (discussionCfg) {
@@ -2076,7 +2082,8 @@ Respond with ONLY valid JSON:
     sendMessage: (msg: any) => void,
     db: D1Client,
     analysisBackend: { provider: string; model: string },
-    evaluationPrompt?: string
+    evaluationPrompt?: string,
+    documentMetadata?: string
   ): Promise<void> {
     console.log(`Starting analyzePersona for ${persona.id} in session ${sessionId}`);
     console.log(`Document text length: ${documentText.length}`);
@@ -2125,7 +2132,7 @@ Respond with ONLY valid JSON:
       const clibridge = new CLIBridgeClient(this.env);
 
       // Call CLIBridge streaming endpoint
-      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt);
+      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt, documentMetadata);
 
       // Document text is already bounded at extraction time (400K chars).
       // No further truncation needed — the full document must reach the model
@@ -2522,7 +2529,7 @@ Respond with ONLY valid JSON:
     }
   }
 
-  private buildSystemPrompt(persona: any, evaluationPrompt?: string): string {
+  private buildSystemPrompt(persona: any, evaluationPrompt?: string, documentMetadata?: string): string {
     const profile = JSON.parse(persona.profile_json);
 
     // When an evaluation_prompt is provided, it scopes HOW the persona should
@@ -2533,6 +2540,25 @@ Respond with ONLY valid JSON:
     const evaluationScope = evaluationPrompt
       ? `\nEVALUATION SCOPE:\n${evaluationPrompt}\nApply your rubric dimensions specifically through this lens. Do not evaluate whether the document covers everything you need for your job — evaluate whether the messaging achieves the stated objective above.\n`
       : '';
+
+    // When document_metadata includes a document_scope, instruct the persona
+    // to separate in-scope from out-of-scope feedback in their response.
+    let documentScopeBlock = '';
+    let scopeOutputFormat = '';
+    if (documentMetadata) {
+      try {
+        const meta = JSON.parse(documentMetadata);
+        if (meta.document_scope) {
+          documentScopeBlock = `\nDOCUMENT SCOPE:\n${meta.document_scope}\nWhen suggesting improvements, distinguish between issues with the content AS SCOPED ABOVE (in-scope) and suggestions for content that belongs in a different document (out-of-scope). Tag each issue accordingly.\n`;
+          scopeOutputFormat = `,
+  "out_of_scope_suggestions": [
+    { "suggestion": "...", "belongs_in": "..." }
+  ]`;
+        }
+      } catch {
+        // Invalid metadata JSON — skip scope tagging.
+      }
+    }
 
     return `You are ${profile.name}, a ${profile.role}.
 
@@ -2556,7 +2582,7 @@ ${profile.voice_and_tone}
 
 TYPICAL OBJECTIONS:
 ${profile.typical_objections.join('\n')}
-${evaluationScope}
+${evaluationScope}${documentScopeBlock}
 EVALUATION FRAMEWORK:
 Score each dimension from 1-10 and provide specific commentary.
 - relevance: Does this speak to my actual priorities and pain points?
@@ -2586,7 +2612,7 @@ Respond with ONLY valid JSON (no markdown, no code blocks, no extra text). Use t
   ],
   "what_works_well": ["...", "..."],
   "overall_verdict": "...",
-  "rewritten_headline_suggestion": "..."
+  "rewritten_headline_suggestion": "..."${scopeOutputFormat}
 }`;
   }
 
