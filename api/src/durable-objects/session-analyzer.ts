@@ -40,7 +40,7 @@ type AnalysisJobState = {
   file_extension: string;
   workflow: Workflow;
   persona_ids: string[];
-  // Stored after extraction (truncated for analysis).
+  // Stored after extraction (capped at 400K chars for safety).
   document_text: string;
   document_excerpt: string;
   // Standard workflow.
@@ -312,8 +312,13 @@ export class SessionAnalyzer {
       return;
     }
 
-    // Store truncated text for downstream model calls.
-    const MAX_DOC_CHARS = 8000;
+    // Pass the full document text to downstream model calls.
+    // Claude models support 200K tokens (~800K chars); even smaller models
+    // via OpenCode handle 128K+ tokens. The previous 8K char limit was
+    // discarding 87%+ of typical marketing documents, causing personas to
+    // evaluate only the first few pages.
+    // Cap at 400K chars as a safety net (well within Claude's context window).
+    const MAX_DOC_CHARS = 400_000;
     const documentForAnalysis = documentText.length > MAX_DOC_CHARS ? documentText.slice(0, MAX_DOC_CHARS) : documentText;
     if (documentText.length > MAX_DOC_CHARS) {
       console.log(`Truncated document text for session ${sessionId}: ${documentText.length} -> ${documentForAnalysis.length} chars`);
@@ -328,7 +333,7 @@ export class SessionAnalyzer {
       type: 'activity',
       session_id: sessionId,
       phase: 'extract_document_done',
-      message: `Document text extracted (${documentText.length.toLocaleString()} chars, sent ${documentForAnalysis.length.toLocaleString()} chars)`,
+      message: `Document text extracted (${documentText.length.toLocaleString()} chars${documentText.length > MAX_DOC_CHARS ? `, truncated to ${documentForAnalysis.length.toLocaleString()} chars` : ''})`,
       at: new Date().toISOString(),
     });
   }
@@ -1240,8 +1245,8 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
 
       const systemPrompt = this.buildSystemPrompt(persona);
 
-      const MAX_DOC_CHARS = 8000;
-      const documentForAnalysis = documentText.length > MAX_DOC_CHARS ? documentText.slice(0, MAX_DOC_CHARS) : documentText;
+      // Document text is already bounded at extraction time (400K chars).
+      // No further truncation — pass the full document so all content is evaluated.
 
       sendMessage({
         type: 'activity',
@@ -1273,7 +1278,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             provider: member.provider,
             model: member.model,
             systemPrompt,
-            messages: [{ role: 'user', content: documentForAnalysis }],
+            messages: [{ role: 'user', content: documentText }],
           });
           const raw = completion.text;
           const meta = completion.meta;
@@ -1357,7 +1362,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
             provider: council.chair.provider,
             model: council.chair.model,
             systemPrompt,
-            messages: [{ role: 'user', content: documentForAnalysis }],
+            messages: [{ role: 'user', content: documentText }],
           });
           const fallbackText = fallbackCompletion.text;
           const fallbackMeta = fallbackCompletion.meta;
@@ -2113,21 +2118,15 @@ Respond with ONLY valid JSON:
       // Call CLIBridge streaming endpoint
       const systemPrompt = this.buildSystemPrompt(persona);
 
-      // Avoid huge prompts causing upstream failures/timeouts.
-      const MAX_DOC_CHARS = 8000;
-      const documentForAnalysis = documentText.length > MAX_DOC_CHARS
-        ? documentText.slice(0, MAX_DOC_CHARS)
-        : documentText;
-      if (documentText.length > MAX_DOC_CHARS) {
-        console.log(`Truncated document text for persona ${persona.id}: ${documentText.length} -> ${documentForAnalysis.length} chars`);
-      }
-
+      // Document text is already bounded at extraction time (400K chars).
+      // No further truncation needed — the full document must reach the model
+      // so personas can evaluate all content (battle cards, buyer personas, etc.).
       const analysisRequest = {
         provider: analysisBackend.provider,
         model: analysisBackend.model,
         systemPrompt: systemPrompt,
         messages: [
-          { role: 'user', content: documentForAnalysis },
+          { role: 'user', content: documentText },
         ],
       };
 
@@ -2136,7 +2135,7 @@ Respond with ONLY valid JSON:
       let completionMeta: CLIBridgeCompletionMeta | null = null;
 
       console.log(`Calling CLIBridge for persona ${persona.id}`);
-      console.log(`Document text length: ${documentText.length} (sent: ${documentForAnalysis.length})`);
+      console.log(`Document text length: ${documentText.length}`);
       console.log(`System prompt length: ${systemPrompt.length}`);
 
       sendMessage({
