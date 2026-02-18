@@ -12,7 +12,7 @@ class AIBackend(ABC):
     """Abstract base class for AI CLI backends."""
     
     @abstractmethod
-    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str) -> Dict[str, Any]:
+    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str, evaluation_prompt: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Run analysis for a persona on the given document."""
         pass
     
@@ -34,8 +34,28 @@ class ClaudeCodeBackend(AIBackend):
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
     
-    def _build_prompt(self, persona_profile: Dict[str, Any], document_text: str) -> str:
+    def _build_prompt(self, persona_profile: Dict[str, Any], document_text: str, evaluation_prompt: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> str:
         """Build the analysis prompt."""
+        # Build optional evaluation scope block
+        evaluation_scope = ""
+        if evaluation_prompt:
+            evaluation_scope = f"""
+<evaluation_scope>
+{evaluation_prompt}
+Apply your rubric dimensions specifically through this lens. Do not evaluate whether the document covers everything you need for your job — evaluate whether the messaging achieves the stated objective above.
+</evaluation_scope>
+"""
+
+        # Build optional document scope block
+        document_scope_block = ""
+        if document_metadata and document_metadata.get("document_scope"):
+            document_scope_block = f"""
+<document_scope>
+{document_metadata['document_scope']}
+When suggesting improvements, distinguish between issues with the content AS SCOPED ABOVE (in-scope) and suggestions for content that belongs in a different document (out-of-scope). Tag each issue accordingly.
+</document_scope>
+"""
+
         prompt = f"""<persona>
 {json.dumps(persona_profile, indent=2)}
 </persona>
@@ -43,9 +63,9 @@ class ClaudeCodeBackend(AIBackend):
 <role_instruction>
 You are embodying the persona described above. You are attending a marketing review roundtable. Your job is to critically evaluate the following marketing content from your professional perspective. Be direct. Be specific. Do not soften your feedback. The team wants honest, constructive criticism that will make their marketing better — not validation.
 </role_instruction>
-
+{evaluation_scope}{document_scope_block}
 <marketing_content>
-{document_text[:8000]}  <!-- Limit to avoid token limits -->
+{document_text}
 </marketing_content>
 
 <evaluation_framework>
@@ -85,8 +105,8 @@ Respond in this exact JSON structure:
 Respond with ONLY the JSON. No markdown code blocks, no explanations, just valid JSON."""
         return prompt
     
-    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str) -> Dict[str, Any]:
-        prompt = self._build_prompt(persona_profile, document_text)
+    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str, evaluation_prompt: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        prompt = self._build_prompt(persona_profile, document_text, evaluation_prompt, document_metadata)
         
         for attempt in range(settings.AI_RETRY_ATTEMPTS):
             try:
@@ -147,9 +167,7 @@ class CodexBackend(AIBackend):
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
     
-    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str) -> Dict[str, Any]:
-        # Similar implementation to Claude Code
-        # For MVP, we'll focus on Claude Code first
+    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str, evaluation_prompt: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         raise NotImplementedError("Codex backend not yet implemented")
 
 class OpenCodeBackend(AIBackend):
@@ -165,9 +183,7 @@ class OpenCodeBackend(AIBackend):
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
     
-    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str) -> Dict[str, Any]:
-        # Similar implementation to Claude Code
-        # For MVP, we'll focus on Claude Code first
+    async def run_analysis(self, persona_profile: Dict[str, Any], document_text: str, evaluation_prompt: Optional[str] = None, document_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         raise NotImplementedError("OpenCode backend not yet implemented")
 
 class AIBackendFactory:

@@ -30,7 +30,9 @@ class AnalysisService:
         session_id: str,
         document_text: str,
         selected_persona_ids: List[str],
-        sequential: bool = True  # For MVP, sequential is safer
+        sequential: bool = True,  # For MVP, sequential is safer
+        evaluation_prompt: Optional[str] = None,
+        document_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Analyze a document with selected personas."""
         
@@ -70,9 +72,9 @@ class AnalysisService:
         
         # Run analyses
         if sequential:
-            results = await self._run_sequential_analyses(analyses, document_text)
+            results = await self._run_sequential_analyses(analyses, document_text, evaluation_prompt, document_metadata)
         else:
-            results = await self._run_parallel_analyses(analyses, document_text)
+            results = await self._run_parallel_analyses(analyses, document_text, evaluation_prompt, document_metadata)
         
         # Update session status based on results
         failed_count = sum(1 for r in results if r.get('status') == 'failed')
@@ -98,20 +100,22 @@ class AnalysisService:
     async def _run_sequential_analyses(
         self,
         analyses: List[tuple],
-        document_text: str
+        document_text: str,
+        evaluation_prompt: Optional[str] = None,
+        document_metadata: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Run analyses sequentially (safer for MVP)."""
         results = []
-        
+
         for analysis, persona in analyses:
             try:
                 # Update status to running
                 analysis.status = "running"
                 self.db.commit()
-                
+
                 # Run analysis
                 profile_data = persona.profile_json
-                result = await self.backend.run_analysis(profile_data, document_text)
+                result = await self.backend.run_analysis(profile_data, document_text, evaluation_prompt, document_metadata)
                 
                 # Update analysis record
                 analysis.status = "completed"
@@ -151,12 +155,12 @@ class AnalysisService:
     async def _run_parallel_analyses(
         self,
         analyses: List[tuple],
-        document_text: str
+        document_text: str,
+        evaluation_prompt: Optional[str] = None,
+        document_metadata: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Run analyses in parallel (for Phase 2)."""
-        # For MVP, we'll just call sequential
-        # Phase 2 will implement true parallel processing
-        return await self._run_sequential_analyses(analyses, document_text)
+        return await self._run_sequential_analyses(analyses, document_text, evaluation_prompt, document_metadata)
     
     async def retry_failed_analysis(
         self,

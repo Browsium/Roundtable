@@ -48,6 +48,8 @@ class SessionResponse(BaseModel):
     selected_persona_ids: List[str]
     status: str
     share_with_emails: Optional[List[str]] = None
+    evaluation_prompt: Optional[str] = None
+    document_metadata: Optional[Dict[str, Any]] = None
     analyses: Optional[List[AnalysisResponse]] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -57,6 +59,8 @@ class SessionResponse(BaseModel):
 
 class SessionCreate(BaseModel):
     selected_persona_ids: List[str]
+    evaluation_prompt: Optional[str] = None
+    document_metadata: Optional[Dict[str, Any]] = None
 
 class SessionShare(BaseModel):
     emails: List[str]

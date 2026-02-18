@@ -39,6 +39,8 @@ class Session(Base):
     selected_persona_ids = Column(JSON, nullable=False)  # List of persona IDs
     status = Column(String, default="uploaded")  # uploaded, analyzing, completed, partial, failed
     share_with_emails = Column(JSON, default=list)  # List of emails
+    evaluation_prompt = Column(Text, nullable=True)
+    document_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

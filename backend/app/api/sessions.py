@@ -21,6 +21,8 @@ router = APIRouter()
 async def create_session(
     file: UploadFile = File(...),
     selected_persona_ids: str = Form(...),  # JSON string
+    evaluation_prompt: Optional[str] = Form(None),
+    document_metadata: Optional[str] = Form(None),  # JSON string
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -58,6 +60,14 @@ async def create_session(
             os.remove(file_path)
             raise HTTPException(status_code=400, detail=f"Failed to process document: {e}")
         
+        # Parse document_metadata if provided
+        parsed_doc_metadata = None
+        if document_metadata:
+            try:
+                parsed_doc_metadata = json.loads(document_metadata)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid document_metadata JSON")
+
         # Create session record
         session = SessionModel(
             id=session_id,
@@ -66,7 +76,9 @@ async def create_session(
             file_metadata=file_metadata,
             selected_persona_ids=persona_ids,
             status="uploaded",
-            document_text=document_text  # Store extracted text
+            document_text=document_text,  # Store extracted text
+            evaluation_prompt=evaluation_prompt.strip() if evaluation_prompt else None,
+            document_metadata=parsed_doc_metadata
         )
         
         db.add(session)
@@ -144,6 +156,8 @@ async def get_session(
         selected_persona_ids=session.selected_persona_ids,
         status=session.status,
         share_with_emails=session.share_with_emails,
+        evaluation_prompt=session.evaluation_prompt,
+        document_metadata=session.document_metadata,
         analyses=[AnalysisResponse(
             id=a.id,
             persona_id=a.persona_id,
@@ -189,7 +203,9 @@ async def start_analysis(
                 session_id=session_id,
                 document_text=session.document_text,
                 selected_persona_ids=session.selected_persona_ids,
-                sequential=True  # MVP uses sequential
+                sequential=True,  # MVP uses sequential
+                evaluation_prompt=session.evaluation_prompt,
+                document_metadata=session.document_metadata
             )
         )
         
