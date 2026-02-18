@@ -26,6 +26,7 @@ export interface Session {
   analysis_model?: string;
   workflow?: string;
   analysis_config_json?: string;
+  evaluation_prompt?: string;
   error_message?: string;
   created_at: string;
   updated_at: string;
@@ -106,6 +107,7 @@ export class D1Client {
   private ensured = {
     analysisBackendColumns: false,
     sessionWorkflowColumns: false,
+    sessionEvaluationPromptColumn: false,
     errorMessageColumn: { sessions: false, analyses: false },
     sessionSharesSchema: false,
     personaGroupsSchema: false,
@@ -161,6 +163,26 @@ export class D1Client {
     await ensureColumn('workflow');
     await ensureColumn('analysis_config_json');
     this.ensured.sessionWorkflowColumns = true;
+  }
+
+  private async ensureSessionEvaluationPromptColumn(): Promise<void> {
+    if (this.ensured.sessionEvaluationPromptColumn) return;
+    const exists = await this.columnExists('sessions', 'evaluation_prompt');
+    if (exists) {
+      this.ensured.sessionEvaluationPromptColumn = true;
+      return;
+    }
+    try {
+      await this.db.prepare('ALTER TABLE sessions ADD COLUMN evaluation_prompt TEXT').run();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.toLowerCase().includes('duplicate column')) {
+        this.ensured.sessionEvaluationPromptColumn = true;
+        return;
+      }
+      throw e;
+    }
+    this.ensured.sessionEvaluationPromptColumn = true;
   }
 
   private async ensureErrorMessageColumn(table: 'sessions' | 'analyses'): Promise<void> {
@@ -390,6 +412,11 @@ export class D1Client {
       await this.ensureSessionWorkflowColumns();
     }
 
+    const includeEvaluationPrompt = Object.prototype.hasOwnProperty.call(session, 'evaluation_prompt');
+    if (includeEvaluationPrompt) {
+      await this.ensureSessionEvaluationPromptColumn();
+    }
+
     const columns = [
       'id',
       'user_email',
@@ -401,6 +428,7 @@ export class D1Client {
       'status',
       ...(includeBackend ? ['analysis_provider', 'analysis_model'] : []),
       ...(includeWorkflow ? ['workflow', 'analysis_config_json'] : []),
+      ...(includeEvaluationPrompt ? ['evaluation_prompt'] : []),
       'created_at',
       'updated_at',
     ];
@@ -428,6 +456,10 @@ export class D1Client {
       values.push((session as any).analysis_config_json || null);
     }
 
+    if (includeEvaluationPrompt) {
+      values.push((session as any).evaluation_prompt || null);
+    }
+
     values.push(now, now);
 
     await this.db.prepare(
@@ -449,14 +481,18 @@ export class D1Client {
       await this.ensureSessionWorkflowColumns();
     }
 
+    if (Object.prototype.hasOwnProperty.call(updates, 'evaluation_prompt')) {
+      await this.ensureSessionEvaluationPromptColumn();
+    }
+
     if (Object.prototype.hasOwnProperty.call(updates, 'error_message')) {
       await this.ensureErrorMessageColumn('sessions');
     }
-     
+
     const setClause = fields.map(f => `${f} = ?`).join(', ');
     const values = fields.map(f => (updates as any)[f]);
     values.push(now, id);
-     
+
     await this.db.prepare(`UPDATE sessions SET ${setClause}, updated_at = ? WHERE id = ?`).bind(...values).run();
   }
 

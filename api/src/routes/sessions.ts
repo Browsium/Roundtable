@@ -88,6 +88,7 @@ sessionRoutes.post('/', async (c) => {
   const analysis_model = typeof body?.analysis_model === 'string' ? body.analysis_model : undefined;
   const workflow = typeof body?.workflow === 'string' ? body.workflow.trim() : '';
   const analysis_config_json = body?.analysis_config_json;
+  const evaluation_prompt = typeof body?.evaluation_prompt === 'string' ? body.evaluation_prompt.trim() : '';
   
   if (!file_name || !selected_persona_ids) {
     return c.json({ error: 'file_name and selected_persona_ids are required' }, 400);
@@ -194,6 +195,7 @@ sessionRoutes.post('/', async (c) => {
       ...(workflowFinal ? { workflow: workflowFinal } : {}),
       ...(configFinal ? { analysis_config_json: configFinal } : {}),
     } : {}),
+    ...(evaluation_prompt ? { evaluation_prompt } : {}),
   });
   
   // Create analysis records for each persona

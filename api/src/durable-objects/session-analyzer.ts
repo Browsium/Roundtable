@@ -43,6 +43,8 @@ type AnalysisJobState = {
   // Stored after extraction (capped at 400K chars for safety).
   document_text: string;
   document_excerpt: string;
+  // Optional evaluation prompt that scopes how personas evaluate the document.
+  evaluation_prompt: string;
   // Standard workflow.
   roundtable_backend?: Backend;
   // Council workflow.
@@ -377,20 +379,22 @@ export class SessionAnalyzer {
       at: new Date().toISOString(),
     });
 
+    const evalPrompt = job.evaluation_prompt || undefined;
+
     if (job.workflow === 'roundtable_council') {
       if (!job.council) throw new Error('Missing council workflow configuration');
-      await this.analyzePersonaCouncil(sessionId, persona, job.document_text, sendMessage, db, job.council);
+      await this.analyzePersonaCouncil(sessionId, persona, job.document_text, sendMessage, db, job.council, evalPrompt);
       return;
     }
 
     if (job.workflow === 'role_variant_discussion') {
       if (!job.discussion) throw new Error('Missing discussion workflow configuration');
-      await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.discussion.variant_backend);
+      await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.discussion.variant_backend, evalPrompt);
       return;
     }
 
     if (!job.roundtable_backend) throw new Error('Missing roundtable backend configuration');
-    await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.roundtable_backend);
+    await this.analyzePersona(sessionId, persona, job.document_text, sendMessage, db, job.roundtable_backend, evalPrompt);
   }
 
   private async jobDiscussionGenerateTasks(job: AnalysisJobState, db: D1Client, _sendMessage: (msg: any) => void): Promise<void> {
@@ -1008,6 +1012,7 @@ export class SessionAnalyzer {
         persona_ids: selectedPersonaIds,
         document_text: '',
         document_excerpt: '',
+        evaluation_prompt: ((session as any).evaluation_prompt || '').trim(),
         ...(workflow === 'roundtable_council'
           ? { council: councilCfg || { members: [validatedBackend], reviewer: validatedBackend, chair: validatedBackend } }
           : {}),
@@ -1217,7 +1222,8 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
     documentText: string,
     sendMessage: (msg: any) => void,
     db: D1Client,
-    council: { members: Backend[]; reviewer: Backend; chair: Backend }
+    council: { members: Backend[]; reviewer: Backend; chair: Backend },
+    evaluationPrompt?: string
   ): Promise<void> {
     console.log(`Starting analyzePersonaCouncil for ${persona.id} in session ${sessionId}`);
 
@@ -1243,7 +1249,7 @@ Respond with ONLY valid JSON (no markdown, no extra text). Use this exact shape:
 
       sendMessage({ type: 'status', persona_id: persona.id, status: 'running' });
 
-      const systemPrompt = this.buildSystemPrompt(persona);
+      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt);
 
       // Document text is already bounded at extraction time (400K chars).
       // No further truncation — pass the full document so all content is evaluated.
@@ -1994,13 +2000,15 @@ Respond with ONLY valid JSON:
         return;
       }
 
+      const evalPrompt = ((session as any).evaluation_prompt || '').trim() || undefined;
+
       if (councilCfg) {
-        await this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, councilCfg);
+        await this.analyzePersonaCouncil(sessionId, persona, documentText, sendMessage, db, councilCfg, evalPrompt);
         await this.updateSessionFinalStatus(sessionId, db, sendMessage);
         return;
       }
 
-      await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend);
+      await this.analyzePersona(sessionId, persona, documentText, sendMessage, db, analysisBackend, evalPrompt);
 
       // If this session is a discussion workflow, re-run chair synthesis to update the final.
       if (discussionCfg) {
@@ -2067,7 +2075,8 @@ Respond with ONLY valid JSON:
     documentText: string,
     sendMessage: (msg: any) => void,
     db: D1Client,
-    analysisBackend: { provider: string; model: string }
+    analysisBackend: { provider: string; model: string },
+    evaluationPrompt?: string
   ): Promise<void> {
     console.log(`Starting analyzePersona for ${persona.id} in session ${sessionId}`);
     console.log(`Document text length: ${documentText.length}`);
@@ -2116,7 +2125,7 @@ Respond with ONLY valid JSON:
       const clibridge = new CLIBridgeClient(this.env);
 
       // Call CLIBridge streaming endpoint
-      const systemPrompt = this.buildSystemPrompt(persona);
+      const systemPrompt = this.buildSystemPrompt(persona, evaluationPrompt);
 
       // Document text is already bounded at extraction time (400K chars).
       // No further truncation needed — the full document must reach the model
@@ -2513,9 +2522,18 @@ Respond with ONLY valid JSON:
     }
   }
 
-  private buildSystemPrompt(persona: any): string {
+  private buildSystemPrompt(persona: any, evaluationPrompt?: string): string {
     const profile = JSON.parse(persona.profile_json);
-    
+
+    // When an evaluation_prompt is provided, it scopes HOW the persona should
+    // evaluate the document (e.g. "Does this messaging resonate?" vs open-ended
+    // "What do you think of this document?"). This prevents personas from
+    // evaluating whether the document is useful for their job rather than
+    // whether the messaging itself is effective.
+    const evaluationScope = evaluationPrompt
+      ? `\nEVALUATION SCOPE:\n${evaluationPrompt}\nApply your rubric dimensions specifically through this lens. Do not evaluate whether the document covers everything you need for your job — evaluate whether the messaging achieves the stated objective above.\n`
+      : '';
+
     return `You are ${profile.name}, a ${profile.role}.
 
 BACKGROUND:
@@ -2538,7 +2556,7 @@ ${profile.voice_and_tone}
 
 TYPICAL OBJECTIONS:
 ${profile.typical_objections.join('\n')}
-
+${evaluationScope}
 EVALUATION FRAMEWORK:
 Score each dimension from 1-10 and provide specific commentary.
 - relevance: Does this speak to my actual priorities and pain points?

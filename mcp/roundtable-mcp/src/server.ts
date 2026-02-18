@@ -300,6 +300,8 @@ async function focusGroup(
     throw new Error('analysis_provider and analysis_model must be provided together (both non-empty).');
   }
 
+  const evaluationPrompt = typeof args.evaluation_prompt === 'string' ? args.evaluation_prompt.trim() : '';
+
   const createSessionBody: any = {
     file_name: filename,
     file_size_bytes: bytes.byteLength,
@@ -309,6 +311,9 @@ async function focusGroup(
   if (analysisProvider && analysisModel) {
     createSessionBody.analysis_provider = analysisProvider;
     createSessionBody.analysis_model = analysisModel;
+  }
+  if (evaluationPrompt) {
+    createSessionBody.evaluation_prompt = evaluationPrompt;
   }
 
   if (workflow === 'roundtable_council') {
@@ -762,6 +767,7 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
                 },
                 required: ['provider', 'model'],
               },
+              evaluation_prompt: { type: 'string', description: 'Optional evaluation prompt that scopes how personas evaluate the document. Example: "Does this messaging resonate with your role and priorities? Evaluate whether the positioning, claims, and language would influence your purchasing decision." When provided, personas evaluate through this lens rather than open-ended document review.' },
               wait: { type: 'boolean', description: 'If true, wait for completion and return results (default: true).' },
               timeout_seconds: { type: 'number', description: 'Max seconds to wait when wait=true (default: 900).' },
               poll_interval_seconds: { type: 'number', description: 'Polling interval in seconds (default: 2).' },
