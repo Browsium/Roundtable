@@ -27,6 +27,7 @@ export interface Session {
   workflow?: string;
   analysis_config_json?: string;
   evaluation_prompt?: string;
+  document_metadata?: string;
   error_message?: string;
   created_at: string;
   updated_at: string;
@@ -108,6 +109,7 @@ export class D1Client {
     analysisBackendColumns: false,
     sessionWorkflowColumns: false,
     sessionEvaluationPromptColumn: false,
+    sessionDocumentMetadataColumn: false,
     errorMessageColumn: { sessions: false, analyses: false },
     sessionSharesSchema: false,
     personaGroupsSchema: false,
@@ -183,6 +185,26 @@ export class D1Client {
       throw e;
     }
     this.ensured.sessionEvaluationPromptColumn = true;
+  }
+
+  private async ensureSessionDocumentMetadataColumn(): Promise<void> {
+    if (this.ensured.sessionDocumentMetadataColumn) return;
+    const exists = await this.columnExists('sessions', 'document_metadata');
+    if (exists) {
+      this.ensured.sessionDocumentMetadataColumn = true;
+      return;
+    }
+    try {
+      await this.db.prepare('ALTER TABLE sessions ADD COLUMN document_metadata TEXT').run();
+    } catch (e) {
+      const msg = String(e);
+      if (msg.toLowerCase().includes('duplicate column')) {
+        this.ensured.sessionDocumentMetadataColumn = true;
+        return;
+      }
+      throw e;
+    }
+    this.ensured.sessionDocumentMetadataColumn = true;
   }
 
   private async ensureErrorMessageColumn(table: 'sessions' | 'analyses'): Promise<void> {
@@ -417,6 +439,11 @@ export class D1Client {
       await this.ensureSessionEvaluationPromptColumn();
     }
 
+    const includeDocumentMetadata = Object.prototype.hasOwnProperty.call(session, 'document_metadata');
+    if (includeDocumentMetadata) {
+      await this.ensureSessionDocumentMetadataColumn();
+    }
+
     const columns = [
       'id',
       'user_email',
@@ -429,6 +456,7 @@ export class D1Client {
       ...(includeBackend ? ['analysis_provider', 'analysis_model'] : []),
       ...(includeWorkflow ? ['workflow', 'analysis_config_json'] : []),
       ...(includeEvaluationPrompt ? ['evaluation_prompt'] : []),
+      ...(includeDocumentMetadata ? ['document_metadata'] : []),
       'created_at',
       'updated_at',
     ];
@@ -460,6 +488,10 @@ export class D1Client {
       values.push((session as any).evaluation_prompt || null);
     }
 
+    if (includeDocumentMetadata) {
+      values.push((session as any).document_metadata || null);
+    }
+
     values.push(now, now);
 
     await this.db.prepare(
@@ -483,6 +515,10 @@ export class D1Client {
 
     if (Object.prototype.hasOwnProperty.call(updates, 'evaluation_prompt')) {
       await this.ensureSessionEvaluationPromptColumn();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'document_metadata')) {
+      await this.ensureSessionDocumentMetadataColumn();
     }
 
     if (Object.prototype.hasOwnProperty.call(updates, 'error_message')) {

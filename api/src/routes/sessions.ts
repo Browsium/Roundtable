@@ -89,6 +89,7 @@ sessionRoutes.post('/', async (c) => {
   const workflow = typeof body?.workflow === 'string' ? body.workflow.trim() : '';
   const analysis_config_json = body?.analysis_config_json;
   const evaluation_prompt = typeof body?.evaluation_prompt === 'string' ? body.evaluation_prompt.trim() : '';
+  const document_metadata_raw = body?.document_metadata;
   
   if (!file_name || !selected_persona_ids) {
     return c.json({ error: 'file_name and selected_persona_ids are required' }, 400);
@@ -150,6 +151,25 @@ sessionRoutes.post('/', async (c) => {
       return c.json({ error: 'analysis_config_json must be an object or JSON string' }, 400);
     }
   }
+
+  let documentMetadataFinal: string | undefined = undefined;
+  if (document_metadata_raw !== undefined && document_metadata_raw !== null) {
+    if (typeof document_metadata_raw === 'string') {
+      const trimmed = document_metadata_raw.trim();
+      if (trimmed) {
+        try {
+          JSON.parse(trimmed);
+        } catch {
+          return c.json({ error: 'document_metadata must be valid JSON' }, 400);
+        }
+        documentMetadataFinal = trimmed;
+      }
+    } else if (typeof document_metadata_raw === 'object') {
+      documentMetadataFinal = JSON.stringify(document_metadata_raw);
+    } else {
+      return c.json({ error: 'document_metadata must be an object or JSON string' }, 400);
+    }
+  }
   
   const userEmail = getViewerEmail(c);
   const sessionId = crypto.randomUUID();
@@ -196,6 +216,7 @@ sessionRoutes.post('/', async (c) => {
       ...(configFinal ? { analysis_config_json: configFinal } : {}),
     } : {}),
     ...(evaluation_prompt ? { evaluation_prompt } : {}),
+    ...(documentMetadataFinal ? { document_metadata: documentMetadataFinal } : {}),
   });
   
   // Create analysis records for each persona

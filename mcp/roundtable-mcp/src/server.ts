@@ -315,6 +315,9 @@ async function focusGroup(
   if (evaluationPrompt) {
     createSessionBody.evaluation_prompt = evaluationPrompt;
   }
+  if (args.document_metadata && typeof args.document_metadata === 'object') {
+    createSessionBody.document_metadata = args.document_metadata;
+  }
 
   if (workflow === 'roundtable_council') {
     const rawMembers = Array.isArray(args.council_members) ? args.council_members : [];
@@ -768,6 +771,15 @@ export function createRoundtableMcpServer(options: { version: string; mode: Roun
                 required: ['provider', 'model'],
               },
               evaluation_prompt: { type: 'string', description: 'Optional evaluation prompt that scopes how personas evaluate the document. Example: "Does this messaging resonate with your role and priorities? Evaluate whether the positioning, claims, and language would influence your purchasing decision." When provided, personas evaluate through this lens rather than open-ended document review.' },
+              document_metadata: {
+                type: 'object',
+                description: 'Optional structured metadata about the document being evaluated. Stored on the session for downstream analysis.',
+                properties: {
+                  document_type: { type: 'string', description: 'Document type (e.g. positioning, one-pager, landing-page, email, deck).' },
+                  document_scope: { type: 'string', description: 'What this document IS and what it is NOT (e.g. "Core positioning for enterprise security buyers. NOT a technical datasheet or deployment guide.").' },
+                  target_audience: { type: 'string', description: 'Primary audience (e.g. "CISOs and IT Directors at mid-to-large enterprises").' },
+                },
+              },
               wait: { type: 'boolean', description: 'If true, wait for completion and return results (default: true).' },
               timeout_seconds: { type: 'number', description: 'Max seconds to wait when wait=true (default: 900).' },
               poll_interval_seconds: { type: 'number', description: 'Polling interval in seconds (default: 2).' },
